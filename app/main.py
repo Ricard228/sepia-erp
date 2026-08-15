@@ -85,8 +85,17 @@ if os.path.isdir(DOSSIER_STATIQUE):
 
     @app.get("/{chemin:path}", include_in_schema=False)
     def application_monopage(chemin: str):
-        """Toute route non-API renvoie l'interface (navigation côté client)."""
-        fichier = os.path.join(DOSSIER_STATIQUE, chemin)
-        if chemin and os.path.isfile(fichier):
-            return FileResponse(fichier)
+        """Toute route non-API renvoie l'interface (navigation côté client).
+
+        Les chemins commençant par /api restent en 404 afin que les erreurs de
+        l'API ne soient pas masquées par la page d'accueil, et le service de
+        fichiers est confiné au dossier statique (protection contre la
+        traversée de répertoire).
+        """
+        if chemin.startswith("api/"):
+            return JSONResponse(status_code=404, content={"detail": "Ressource API introuvable."})
+        candidat = os.path.realpath(os.path.join(DOSSIER_STATIQUE, chemin))
+        racine_statique = os.path.realpath(DOSSIER_STATIQUE)
+        if chemin and candidat.startswith(racine_statique + os.sep) and os.path.isfile(candidat):
+            return FileResponse(candidat)
         return FileResponse(os.path.join(DOSSIER_STATIQUE, "index.html"))
