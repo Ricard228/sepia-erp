@@ -84,6 +84,10 @@ class Project(Base, TimestampMixin):
     theory_of_change = Column(Text)
     strategic_alignment = Column(JSON, default=dict)  # ODD, PND, stratégies sectorielles
     me_approach = Column(Text)                        # approche de S&E retenue
+    # Options d'affichage : le suivi des processus alourdit le dispositif et
+    # n'est pertinent que sur certains projets ; il est donc activable projet
+    # par projet, sans jamais supprimer les données déjà saisies.
+    show_process_indicators = Column(Boolean, default=False)
     created_by = Column(Integer, ForeignKey("users.id"))
 
     logframe = relationship("LogframeElement", back_populates="project", cascade="all, delete-orphan")
@@ -149,6 +153,11 @@ class Indicator(Base, TimestampMixin):
     name = Column(Text, nullable=False)
     definition = Column(Text)                       # définition opérationnelle
     level = Column(String(20))                      # IMPACT | EFFET | PRODUIT | ACTIVITE
+    # Nature de l'indicateur : « Résultat » mesure un changement, « Processus »
+    # mesure la conduite de l'action (taux d'exécution, délais, participation,
+    # respect du calendrier). L'affichage des indicateurs de processus est
+    # commandé par l'option correspondante du projet.
+    indicator_class = Column(String(20), default="Résultat")
     indicator_type = Column(String(30), default="Quantitatif")
     unit = Column(String(60), default="Nombre")     # Nombre, %, Ratio, Score, FCFA...
     formula = Column(Text)                          # mode de calcul
@@ -310,7 +319,12 @@ class Activity(Base, TimestampMixin):
     end_date = Column(Date)
     progress = Column(Float, default=0.0)           # 0-100 %
     status = Column(String(40), default="Planifiée")  # Planifiée|En cours|Achevée|Retardée|Annulée
-    dependencies = Column(String(200))              # codes d'activités prérequises
+    # Antécédents pour l'ordonnancement : codes d'activités séparés par des
+    # virgules, relation fin-début (l'activité ne peut démarrer qu'une fois
+    # ses antécédents achevés).
+    dependencies = Column(String(200))
+    duration_days = Column(Integer)                 # durée imposée ; sinon déduite des dates
+    wbs_code = Column(String(40))                   # code d'organigramme des tâches
     planned_cost = Column(Float, default=0.0)
     actual_cost = Column(Float, default=0.0)
     year = Column(Integer)
@@ -319,6 +333,36 @@ class Activity(Base, TimestampMixin):
     order_index = Column(Integer, default=0)
 
     project = relationship("Project", back_populates="activities")
+
+
+class Stakeholder(Base, TimestampMixin):
+    """Partie prenante du projet, colonne de la matrice RACI."""
+    __tablename__ = "stakeholders"
+    id = Column(Integer, primary_key=True)
+    project_id = Column(Integer, ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
+    code = Column(String(30))
+    name = Column(String(160), nullable=False)      # fonction ou structure
+    organisation = Column(String(160))
+    category = Column(String(60))                   # Interne | Partenaire | Prestataire | Tutelle…
+    contact = Column(String(160))
+    order_index = Column(Integer, default=0)
+
+
+class RaciAssignment(Base, TimestampMixin):
+    """Affectation RACI : rôle d'une partie prenante sur une activité.
+
+    R (Responsible) exécute, A (Accountable) rend compte et approuve,
+    C (Consulted) est consulté avant décision, I (Informed) est informé après.
+    Règle de cohérence : exactement un A par activité, au moins un R.
+    """
+    __tablename__ = "raci_assignments"
+    __table_args__ = (UniqueConstraint("activity_id", "stakeholder_id", name="uq_raci"),)
+    id = Column(Integer, primary_key=True)
+    project_id = Column(Integer, ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
+    activity_id = Column(Integer, ForeignKey("activities.id", ondelete="CASCADE"), nullable=False, index=True)
+    stakeholder_id = Column(Integer, ForeignKey("stakeholders.id", ondelete="CASCADE"), nullable=False)
+    role = Column(String(1), nullable=False)        # R | A | C | I
+    comment = Column(Text)
 
 
 class BudgetLine(Base, TimestampMixin):

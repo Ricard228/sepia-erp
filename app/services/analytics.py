@@ -150,6 +150,7 @@ def indicator_performance(indicator: Indicator) -> Dict[str, Any]:
         "code": indicator.code,
         "name": indicator.name,
         "level": indicator.level,
+        "classe": indicator.indicator_class or "Résultat",
         "unit": indicator.unit,
         "is_key": indicator.is_key,
         "frequency": indicator.frequency,
@@ -188,9 +189,29 @@ def serie_temporelle(indicator: Indicator) -> Dict[str, Any]:
     }
 
 
-def synthese_indicateurs(db: Session, project_id: int) -> Dict[str, Any]:
-    indicators = db.query(Indicator).filter(Indicator.project_id == project_id,
-                                            Indicator.is_active.is_(True)).all()
+def indicateurs_du_projet(db: Session, project_id: int,
+                          inclure_processus: Optional[bool] = None) -> List[Indicator]:
+    """Indicateurs actifs d'un projet, filtrés selon l'option d'affichage des processus.
+
+    Les indicateurs de processus (taux d'exécution, délais, participation)
+    documentent la conduite de l'action plutôt que le changement produit. Ils
+    alourdissent la lecture du dispositif et ne sont donc affichés que si le
+    projet a activé leur suivi — sans jamais être supprimés de la base.
+    """
+    requete = db.query(Indicator).filter(Indicator.project_id == project_id,
+                                         Indicator.is_active.is_(True))
+    if inclure_processus is None:
+        projet = db.get(Project, project_id)
+        inclure_processus = bool(projet and projet.show_process_indicators)
+    if not inclure_processus:
+        requete = requete.filter((Indicator.indicator_class.is_(None)) |
+                                 (Indicator.indicator_class != "Processus"))
+    return requete.all()
+
+
+def synthese_indicateurs(db: Session, project_id: int,
+                         inclure_processus: Optional[bool] = None) -> Dict[str, Any]:
+    indicators = indicateurs_du_projet(db, project_id, inclure_processus)
     lignes = [indicator_performance(i) for i in indicators]
     par_statut: Dict[str, int] = {}
     par_niveau: Dict[str, Dict[str, Any]] = {}
@@ -206,6 +227,9 @@ def synthese_indicateurs(db: Session, project_id: int) -> Dict[str, Any]:
         bucket["taux_moyen"] = round(bucket["taux_cumule"] / bucket["renseignes"], 1) if bucket["renseignes"] else None
         bucket.pop("taux_cumule")
     renseignes = [l["taux"] for l in lignes if l["taux"] is not None]
+    nb_processus = db.query(Indicator).filter(
+        Indicator.project_id == project_id, Indicator.is_active.is_(True),
+        Indicator.indicator_class == "Processus").count()
     return {
         "lignes": lignes,
         "total": len(lignes),
@@ -214,6 +238,8 @@ def synthese_indicateurs(db: Session, project_id: int) -> Dict[str, Any]:
         "taux_couverture": round(len(renseignes) / len(lignes) * 100, 1) if lignes else 0,
         "par_statut": par_statut,
         "par_niveau": par_niveau,
+        "nb_processus_disponibles": nb_processus,
+        "processus_affiches": len([l for l in lignes if l.get("classe") == "Processus"]),
     }
 
 
@@ -485,10 +511,10 @@ def indice_equite_genre(valeurs_genre: Dict[str, float]) -> Optional[Dict[str, A
 
 
 def synthese_desagregation(db: Session, project_id: int,
-                           periode: Optional[str] = None) -> Dict[str, Any]:
+                           periode: Optional[str] = None,
+                           inclure_processus: Optional[bool] = None) -> Dict[str, Any]:
     """Analyse d'équité consolidée : par catégorie, par modalité et par indicateur."""
-    indicateurs = db.query(Indicator).filter(Indicator.project_id == project_id,
-                                             Indicator.is_active.is_(True)).all()
+    indicateurs = indicateurs_du_projet(db, project_id, inclure_processus)
     global_cumul: Dict[str, Dict[str, float]] = {}
     lignes = []
     attendus, renseignes = 0, 0
@@ -713,9 +739,9 @@ def qualite_smart_indicateur(indicator: Indicator) -> Dict[str, Any]:
     }
 
 
-def synthese_qualite_smart(db: Session, project_id: int) -> Dict[str, Any]:
-    indicateurs = db.query(Indicator).filter(Indicator.project_id == project_id,
-                                             Indicator.is_active.is_(True)).all()
+def synthese_qualite_smart(db: Session, project_id: int,
+                           inclure_processus: Optional[bool] = None) -> Dict[str, Any]:
+    indicateurs = indicateurs_du_projet(db, project_id, inclure_processus)
     lignes = [qualite_smart_indicateur(i) for i in indicateurs]
     par_critere = {}
     for critere in CRITERES_SMART:
@@ -767,11 +793,11 @@ def _periodes_couvertes(periode: str) -> List[str]:
            [f"{periode}-T{t}" for t in (1, 2, 3, 4)]
 
 
-def analyse_periode(db: Session, project_id: int, periode: str) -> Dict[str, Any]:
+def analyse_periode(db: Session, project_id: int, periode: str,
+                    inclure_processus: Optional[bool] = None) -> Dict[str, Any]:
     """Photographie de la performance sur une période de rapportage donnée."""
     couvertes = set(_periodes_couvertes(periode))
-    indicateurs = db.query(Indicator).filter(Indicator.project_id == project_id,
-                                             Indicator.is_active.is_(True)).all()
+    indicateurs = indicateurs_du_projet(db, project_id, inclure_processus)
     lignes = []
     cumul_desagrege: Dict[str, Dict[str, float]] = {}
     for indicateur in indicateurs:

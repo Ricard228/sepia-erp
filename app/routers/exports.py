@@ -58,6 +58,14 @@ LIVRABLES = [
      "description": "Cibles et réalisations par période, avec taux et mise en forme conditionnelle."},
     {"cle": "chronogramme-excel", "libelle": "Chronogramme (Gantt)", "format": "Excel",
      "description": "Diagramme de Gantt mensuel coloré selon l'état d'avancement."},
+    {"cle": "chemin-critique-excel", "libelle": "Chemin critique et réseau PERT", "format": "Excel",
+     "description": "Ordonnancement CPM : dates au plus tôt et au plus tard, marges, durée du projet."},
+    {"cle": "wbs-excel", "libelle": "Organigramme des tâches (WBS)", "format": "Excel",
+     "description": "Décomposition hiérarchique, coûts consolidés et dictionnaire des lots de travail."},
+    {"cle": "raci-excel", "libelle": "Matrice des responsabilités (RACI)", "format": "Excel",
+     "description": "Matrice activités × acteurs, charge par partie prenante, contrôle de cohérence."},
+    {"cle": "organisation-word", "libelle": "Organisation et ordonnancement", "format": "Word",
+     "description": "Document réunissant le WBS, le chemin critique, le réseau PERT et la matrice RACI."},
     {"cle": "ptba-excel", "libelle": "Plan de travail et budget annuel", "format": "Excel",
      "description": "PTBA détaillé, ventilation trimestrielle et synthèse graphique."},
     {"cle": "risques-excel", "libelle": "Registre des risques", "format": "Excel",
@@ -125,6 +133,18 @@ def _produire(cle: str, db: Session, projet: Project, annee: Optional[int] = Non
     if cle == "chronogramme-excel":
         return excel_export.chronogramme_xlsx(db, projet), \
             _nom_fichier(projet, "Chronogramme", "xlsx"), MIME_XLSX
+    if cle == "chemin-critique-excel":
+        return excel_export.chemin_critique_xlsx(db, projet), \
+            _nom_fichier(projet, "Chemin_critique_PERT", "xlsx"), MIME_XLSX
+    if cle == "wbs-excel":
+        return excel_export.wbs_xlsx(db, projet), \
+            _nom_fichier(projet, "Organigramme_des_taches_WBS", "xlsx"), MIME_XLSX
+    if cle == "raci-excel":
+        return excel_export.raci_xlsx(db, projet), \
+            _nom_fichier(projet, "Matrice_RACI", "xlsx"), MIME_XLSX
+    if cle == "organisation-word":
+        return word_export.organisation_projet_docx(db, projet), \
+            _nom_fichier(projet, "Organisation_et_ordonnancement", "docx"), MIME_DOCX
     if cle == "ptba-excel":
         return excel_export.ptba_xlsx(db, projet, annee), \
             _nom_fichier(projet, f"PTBA_{annee or 'pluriannuel'}", "xlsx"), MIME_XLSX

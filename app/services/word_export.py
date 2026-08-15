@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from ..config import APP_LONG_NAME, APP_NAME, LIBELLES_NIVEAUX
 from ..models import (Activity, Assumption, BudgetLine, Form, Indicator, LogframeElement, Project, Risk)
-from . import analytics
+from . import analytics, planning
 from .excel_export import _elements_tries
 
 BLEU = RGBColor(0x1F, 0x4E, 0x79)
@@ -1072,6 +1072,227 @@ def plan_suivi_evaluation_docx(db: Session, project: Project) -> BytesIO:
     run.font.color.rgb = GRIS
     _pied_de_page(document, f"{project.code} — Plan et manuel de suivi-évaluation — {APP_NAME}")
     return _sauver(document)
+
+
+# ---------------------------------------------------------------------------
+# 6 bis. Organisation et ordonnancement : WBS, chemin critique, RACI
+# ---------------------------------------------------------------------------
+def organisation_projet_docx(db: Session, project: Project) -> BytesIO:
+    """Document d'organisation : organigramme des tâches, ordonnancement et responsabilités."""
+    ordonnancement = planning.chemin_critique(db, project.id)
+    arbre = planning.organigramme_taches(db, project.id)
+    matrice = planning.matrice_raci(db, project.id)
+
+    document = Document()
+    _paysage(document.sections[0])
+    _en_tete_document(document, project, "ORGANISATION ET ORDONNANCEMENT DU PROJET",
+                      "Organigramme des tâches (WBS), chemin critique (CPM/PERT) et "
+                      "matrice des responsabilités (RACI)")
+
+    # --- 1. Organigramme des tâches
+    titre = document.add_heading("1. Organigramme des tâches (Work Breakdown Structure)", level=1)
+    titre.runs[0].font.color.rgb = BLEU
+    document.add_paragraph(
+        f"Le projet se décompose en {arbre['nb_niveaux']} niveaux et "
+        f"{arbre['nb_lots']} lots de travail élémentaires, pour un coût consolidé de "
+        f"{_nombre(arbre['cout_total'])} {project.currency}. La décomposition suit la chaîne de "
+        f"résultats : les effets constituent les composantes, les produits les sous-composantes et "
+        f"les activités les lots de travail.")
+    table = _tableau(document, ["Code WBS", "Nature", "Libellé", "Responsable", "Durée (j)",
+                                f"Coût ({project.currency})", "Part (%)", "Avancement"],
+                     largeurs=[2, 2.6, 8.5, 3.2, 1.8, 3, 1.8, 2.2])
+    total = arbre["cout_total"] or 1
+    for noeud in arbre["lignes"]:
+        ligne = table.add_row()
+        couleur = ["1F4E79", "2E75B6", "5B9BD5", "9DC3E6", "DCE6F1"][min(noeud["profondeur"], 4)]
+        _ombrer(ligne.cells[0], couleur)
+        _texte_cellule(ligne.cells[0], noeud["wbs"], gras=True,
+                       blanc=noeud["profondeur"] < 3, centre=True, taille=8)
+        _texte_cellule(ligne.cells[1], noeud["type"], taille=8)
+        _texte_cellule(ligne.cells[2], "    " * noeud["profondeur"] + (noeud["libelle"] or ""),
+                       gras=noeud["profondeur"] <= 1, taille=8)
+        _texte_cellule(ligne.cells[3], noeud["responsable"] or "—", taille=8)
+        _texte_cellule(ligne.cells[4], noeud["duree"] or "—", centre=True, taille=8)
+        _texte_cellule(ligne.cells[5], _nombre(noeud["cout"]), centre=True, taille=8)
+        _texte_cellule(ligne.cells[6], f"{round((noeud['cout'] or 0) / total * 100, 1)} %",
+                       centre=True, taille=8)
+        _texte_cellule(ligne.cells[7], f"{noeud['avancement']} %", centre=True, taille=8)
+
+    # --- 2. Ordonnancement et chemin critique
+    document.add_page_break()
+    titre = document.add_heading("2. Ordonnancement et chemin critique", level=1)
+    titre.runs[0].font.color.rgb = BLEU
+    document.add_paragraph(
+        f"L'ordonnancement est établi par la méthode du chemin critique, avec des relations de "
+        f"type fin-début. La durée totale du projet ressort à "
+        f"{ordonnancement['duree_projet_jours']} jours, soit environ "
+        f"{ordonnancement['duree_projet_mois']} mois, du "
+        f"{_date_iso_fr(ordonnancement['date_debut'])} au "
+        f"{_date_iso_fr(ordonnancement['date_fin_calculee'])}.")
+    if ordonnancement["ecart_calendrier_jours"] is not None:
+        ecart = ordonnancement["ecart_calendrier_jours"]
+        appreciation = ("conforme à la date de clôture planifiée" if abs(ecart) <= 15 else
+                        f"postérieure de {ecart} jours à la date de clôture planifiée" if ecart > 0
+                        else f"antérieure de {abs(ecart)} jours à la date de clôture planifiée")
+        document.add_paragraph(f"La date de fin calculée est {appreciation}.")
+    document.add_paragraph(
+        f"{ordonnancement['nb_critiques']} activités sur {ordonnancement['nb_activites']} "
+        f"({ordonnancement['part_critique']} %) sont critiques : leur retard se répercute "
+        f"intégralement sur la date d'achèvement du projet. Elles représentent un coût de "
+        f"{_nombre(ordonnancement['cout_chemin_critique'])} {project.currency}. Les activités non "
+        f"critiques disposent d'une marge moyenne de {ordonnancement['marge_moyenne']} jours.")
+    if ordonnancement["chemin_critique"]:
+        p = document.add_paragraph()
+        run = p.add_run("Chemin critique : " + " → ".join(ordonnancement["chemin_critique"]))
+        run.bold = True
+        run.font.size = Pt(10)
+        run.font.color.rgb = RGBColor(0xD9, 0x30, 0x25)
+
+    sous_titre = document.add_heading("2.1 Tableau d'ordonnancement", level=2)
+    sous_titre.runs[0].font.color.rgb = RGBColor(0x2E, 0x75, 0xB6)
+    table = _tableau(document, ["Code", "Activité", "Durée (j)", "Antécédents", "Début tôt",
+                                "Fin tôt", "Début tard", "Fin tard", "Marge", "Critique"],
+                     largeurs=[1.4, 6.5, 1.5, 2.4, 2.1, 2.1, 2.1, 2.1, 1.4, 1.6])
+    for a in ordonnancement["activites"]:
+        ligne = table.add_row()
+        valeurs = [a["code"], a["name"], a["duree"], ", ".join(a["antecedents"]) or "—",
+                   _date_iso_fr(a["date_debut_tot"]), _date_iso_fr(a["date_fin_tot"]),
+                   _date_iso_fr(a["date_debut_tard"]), _date_iso_fr(a["date_fin_tard"]),
+                   a["marge_totale"]]
+        for index, valeur in enumerate(valeurs):
+            _texte_cellule(ligne.cells[index], valeur if valeur not in (None, "") else "—",
+                           centre=index >= 2, taille=7.5)
+        if a["critique"]:
+            for index in range(10):
+                _ombrer(ligne.cells[index], "FCE8E6")
+            _texte_cellule(ligne.cells[9], "CRITIQUE", gras=True, centre=True, taille=7.5)
+            _ombrer(ligne.cells[9], "D93025")
+            _texte_cellule(ligne.cells[9], "CRITIQUE", gras=True, blanc=True, centre=True,
+                           taille=7.5)
+        else:
+            _texte_cellule(ligne.cells[9], "", centre=True, taille=7.5)
+
+    sous_titre = document.add_heading("2.2 Réseau PERT par rang d'ordonnancement", level=2)
+    sous_titre.runs[0].font.color.rgb = RGBColor(0x2E, 0x75, 0xB6)
+    document.add_paragraph(
+        "Les activités d'un même rang ne dépendent pas les unes des autres et peuvent donc être "
+        "conduites en parallèle. Le nombre de rangs indique la profondeur du réseau.")
+    rangs: Dict[int, List[Any]] = {}
+    for a in ordonnancement["activites"]:
+        rangs.setdefault(a["niveau_pert"], []).append(a)
+    table = _tableau(document, ["Rang", "Activités conduites en parallèle", "Durée du rang (j)"],
+                     largeurs=[2, 12, 3])
+    for rang in sorted(rangs):
+        ligne = table.add_row()
+        activites_rang = rangs[rang]
+        _texte_cellule(ligne.cells[0], rang + 1, gras=True, centre=True)
+        _texte_cellule(ligne.cells[1], "\n".join(
+            f"{'▶ ' if a['critique'] else ''}{a['code'] or ''} — {a['name']} ({a['duree']} j)"
+            for a in activites_rang), taille=8)
+        _texte_cellule(ligne.cells[2], max(a["duree"] for a in activites_rang), centre=True)
+    if ordonnancement["avertissements"]:
+        document.add_paragraph()
+        for avertissement in ordonnancement["avertissements"]:
+            p = document.add_paragraph(style="List Bullet")
+            run = p.add_run(avertissement)
+            run.font.size = Pt(8)
+            run.font.color.rgb = RGBColor(0xEA, 0x86, 0x00)
+
+    # --- 3. Matrice RACI
+    document.add_page_break()
+    titre = document.add_heading("3. Matrice des responsabilités (RACI)", level=1)
+    titre.runs[0].font.color.rgb = BLEU
+    document.add_paragraph(
+        f"La matrice attribue à chaque activité un rôle par partie prenante : R (réalise), "
+        f"A (approuve et rend compte), C (consulté avant décision), I (informé après décision). "
+        f"Elle couvre {matrice['nb_activites']} activités et {matrice['nb_parties']} parties "
+        f"prenantes, pour {matrice['nb_affectations']} affectations. Le taux de conformité — "
+        f"activités disposant d'un approbateur unique et d'au moins un réalisateur — s'établit à "
+        f"{matrice['taux_conformite']} %.")
+
+    if matrice["parties_prenantes"]:
+        colonnes = ["Code", "Activité"] + [p["nom"][:18] for p in matrice["parties_prenantes"]]
+        largeur_partie = max(1.1, min(2.2, 16 / max(1, len(matrice["parties_prenantes"]))))
+        largeurs = [1.3, 6] + [largeur_partie] * len(matrice["parties_prenantes"])
+        table = _tableau(document, colonnes, largeurs=largeurs)
+        for activite in matrice["activites"]:
+            ligne = table.add_row()
+            _texte_cellule(ligne.cells[0], activite["code"] or "—", centre=True, taille=7.5)
+            _texte_cellule(ligne.cells[1], activite["libelle"], taille=7.5)
+            for index, partie in enumerate(matrice["parties_prenantes"]):
+                cellule = ligne.cells[2 + index]
+                role = activite["roles"].get(partie["id"]) or \
+                    activite["roles"].get(str(partie["id"]))
+                if role:
+                    _ombrer(cellule, planning.COULEURS_RACI[role].lstrip("#"))
+                    _texte_cellule(cellule, role, gras=True, blanc=True, centre=True, taille=8)
+                else:
+                    _texte_cellule(cellule, "", centre=True, taille=8)
+
+        sous_titre = document.add_heading("3.1 Charge par partie prenante", level=2)
+        sous_titre.runs[0].font.color.rgb = RGBColor(0x2E, 0x75, 0xB6)
+        table = _tableau(document, ["Partie prenante", "Organisation", "Catégorie", "R", "A",
+                                    "C", "I", "Total", "Couverture"],
+                         largeurs=[4.5, 4, 2.6, 1.1, 1.1, 1.1, 1.1, 1.4, 2])
+        for partie in matrice["parties_prenantes"]:
+            ligne = table.add_row()
+            valeurs = [partie["nom"], partie["organisation"] or "—", partie["categorie"] or "—",
+                       partie["R"], partie["A"], partie["C"], partie["I"], partie["total"],
+                       f"{partie['taux_couverture']} %"]
+            for index, valeur in enumerate(valeurs):
+                _texte_cellule(ligne.cells[index], valeur, centre=index >= 3, taille=8)
+    else:
+        document.add_paragraph(
+            "Aucune partie prenante n'est encore déclarée. La matrice RACI se construit en "
+            "recensant d'abord les acteurs, puis en leur attribuant un rôle sur chaque activité.")
+
+    sous_titre = document.add_heading("3.2 Contrôle de cohérence", level=2)
+    sous_titre.runs[0].font.color.rgb = RGBColor(0x2E, 0x75, 0xB6)
+    if matrice["anomalies"]:
+        table = _tableau(document, ["Gravité", "Objet concerné", "Anomalie constatée"],
+                         largeurs=[2.2, 6, 9])
+        for anomalie in matrice["anomalies"]:
+            ligne = table.add_row()
+            _ombrer(ligne.cells[0], "D93025" if anomalie["gravite"] == "danger" else "F9A825")
+            _texte_cellule(ligne.cells[0], anomalie["gravite"].upper(), gras=True, blanc=True,
+                           centre=True, taille=8)
+            _texte_cellule(ligne.cells[1], f"{anomalie['activite']} — {anomalie['libelle']}"[:70],
+                           taille=8)
+            _texte_cellule(ligne.cells[2], anomalie["anomalie"], taille=8)
+    else:
+        document.add_paragraph("Aucune anomalie : chaque activité dispose d'un approbateur unique "
+                               "et d'au moins un réalisateur.")
+
+    sous_titre = document.add_heading("3.3 Conventions d'usage", level=2)
+    sous_titre.runs[0].font.color.rgb = RGBColor(0x2E, 0x75, 0xB6)
+    table = _tableau(document, ["Rôle", "Signification", "Règle appliquée"],
+                     largeurs=[2, 5, 10])
+    regles = {
+        "R": "Plusieurs réalisateurs sont possibles ; au moins un est exigé.",
+        "A": "Un seul approbateur par activité : la responsabilité ne se partage pas.",
+        "C": "La consultation intervient avant la décision ; elle est bilatérale.",
+        "I": "L'information intervient après la décision ; elle est unilatérale.",
+    }
+    for role, description in planning.ROLES_RACI.items():
+        ligne = table.add_row()
+        _ombrer(ligne.cells[0], planning.COULEURS_RACI[role].lstrip("#"))
+        _texte_cellule(ligne.cells[0], f"{role} — {description['libelle']}", gras=True,
+                       blanc=True, centre=True, taille=8)
+        _texte_cellule(ligne.cells[1], description["description"], taille=8)
+        _texte_cellule(ligne.cells[2], regles[role], taille=8)
+
+    _pied_de_page(document, f"{project.code} — Organisation et ordonnancement — "
+                            f"Généré par {APP_NAME}")
+    return _sauver(document)
+
+
+def _date_iso_fr(valeur: Optional[str]) -> str:
+    if not valeur:
+        return "—"
+    try:
+        return date.fromisoformat(str(valeur)[:10]).strftime("%d/%m/%Y")
+    except ValueError:
+        return str(valeur)
 
 
 # ---------------------------------------------------------------------------

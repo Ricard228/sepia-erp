@@ -5,7 +5,8 @@ from sqlalchemy.orm import Session
 
 from .config import ADMIN_EMAIL, ADMIN_NAME, ADMIN_PASSWORD
 from .models import (Activity, Assumption, BudgetLine, Form, FormQuestion, Indicator,
-                     IndicatorActual, IndicatorTarget, LogframeElement, Project, Risk, User, Zone)
+                     IndicatorActual, IndicatorTarget, LogframeElement, Project, RaciAssignment,
+                     Risk, Stakeholder, User, Zone)
 from .security import hash_password
 
 
@@ -303,24 +304,33 @@ def _projet_demonstration(db: Session) -> None:
          540_000_000, False, "120 coopératives agréées"),
         ("A2.1.2", "P2.1", "Former les responsables de coopératives à la gestion et au "
                            "leadership féminin",
-         "Responsable OP", date(2025, 5, 1), date(2027, 6, 30), 22, "En cours",
+         "Responsable OP", date(2028, 1, 1), date(2029, 6, 30), 0, "Planifiée",
          310_000_000, False, "480 responsables formés"),
         ("A2.2.1", "P2.2", "Construire 40 magasins de stockage de 100 tonnes",
-         "Responsable Infrastructures", date(2025, 6, 1), date(2028, 6, 30), 15, "En cours",
+         "Responsable Infrastructures", date(2025, 7, 1), date(2028, 6, 30), 15, "En cours",
          2_600_000_000, True, "40 magasins réceptionnés"),
         ("A2.2.2", "P2.2", "Doter les coopératives d'équipements de conditionnement",
-         "Responsable Infrastructures", date(2026, 1, 1), date(2028, 12, 31), 0, "Planifiée",
+         "Responsable Infrastructures", date(2028, 7, 1), date(2029, 12, 31), 0, "Planifiée",
          980_000_000, False, "40 lots d'équipements livrés"),
         ("A3.1.1", None, "Mettre en place le dispositif de suivi-évaluation et former les acteurs",
          "Responsable S&E", date(2025, 1, 1), date(2025, 5, 31), 100, "Achevée",
          120_000_000, True, "Manuel de S&E validé et plateforme opérationnelle"),
         ("A3.1.2", None, "Réaliser l'étude de référence (baseline)",
-         "Responsable S&E", date(2025, 2, 1), date(2025, 8, 31), 100, "Achevée",
+         "Responsable S&E", date(2025, 6, 1), date(2025, 11, 30), 100, "Achevée",
          210_000_000, True, "Rapport de baseline validé"),
         ("A3.1.3", None, "Conduire les enquêtes annuelles de suivi des effets",
-         "Responsable S&E", date(2025, 10, 1), date(2029, 12, 31), 25, "En cours",
+         "Responsable S&E", date(2025, 12, 1), date(2029, 12, 31), 25, "En cours",
          640_000_000, False, "Rapports d'enquête annuels"),
     ]
+    # Antécédents (relations fin-début) alimentant le chemin critique et le réseau PERT.
+    antecedents = {
+        "A1.3.2": "A1.3.1",        # les travaux suivent les études techniques
+        "A2.2.1": "A1.3.1",        # les magasins suivent les mêmes études
+        "A2.2.2": "A2.2.1",        # l'équipement suit la construction
+        "A2.1.2": "A2.1.1",        # la formation suit la structuration juridique
+        "A3.1.2": "A3.1.1",        # la baseline suit la mise en place du dispositif
+        "A3.1.3": "A3.1.2",        # les enquêtes de suivi suivent la baseline
+    }
     objets_activites = {}
     for position, (code, parent_code, libelle, responsable, debut, fin, avancement, statut,
                    cout, jalon, livrable) in enumerate(activites):
@@ -330,10 +340,13 @@ def _projet_demonstration(db: Session) -> None:
             responsible=responsable, start_date=debut, end_date=fin, progress=avancement,
             status=statut, planned_cost=cout, actual_cost=round(cout * avancement / 100, 0),
             year=debut.year, milestone=jalon, deliverable=livrable, order_index=position,
+            dependencies=antecedents.get(code),
             location="Savanes / Kara", partners="ICAT, ITRA, collectivités territoriales")
         db.add(activite)
         db.flush()
         objets_activites[code] = activite
+
+    _parties_prenantes_et_raci(db, projet, objets_activites)
 
     # --- Cibles trimestrielles et réalisations ---------------------------
     jalons_produits = {
@@ -575,9 +588,109 @@ def _projet_demonstration(db: Session) -> None:
                           verification_method=methode, responsible=responsable,
                           review_date=date(2026, 6, 30)))
 
+    # --- Indicateurs de processus (masqués par défaut) --------------------
+    _indicateurs_processus(db, projet, elements_produits)
+
     # --- Formulaires de collecte -----------------------------------------
     _formulaires_demonstration(db, projet)
     db.commit()
+
+
+def _parties_prenantes_et_raci(db: Session, projet: Project, activites: dict) -> None:
+    """Recense les acteurs du projet et construit la matrice des responsabilités."""
+    definitions = [
+        ("CP", "Comité de pilotage", "Ministère de tutelle", "Tutelle"),
+        ("COORD", "Coordonnateur national", "Unité de gestion du projet", "Interne"),
+        ("RSE", "Responsable suivi-évaluation", "Unité de gestion du projet", "Interne"),
+        ("RAF", "Responsable administratif et financier", "Unité de gestion du projet", "Interne"),
+        ("CCP", "Chef de composante Production", "Unité de gestion du projet", "Interne"),
+        ("CCV", "Chef de composante Chaînes de valeur", "Unité de gestion du projet", "Interne"),
+        ("GR", "Ingénieur génie rural", "Unité de gestion du projet", "Interne"),
+        ("ICAT", "Service de vulgarisation agricole", "ICAT", "Partenaire d'exécution"),
+        ("ENT", "Entreprises de travaux", "Secteur privé", "Prestataire"),
+        ("OP", "Organisations de producteurs", "Coopératives", "Bénéficiaire"),
+        ("PTF", "Bailleur de fonds", "FIDA", "Bailleur"),
+    ]
+    objets = {}
+    for position, (code, nom, organisation, categorie) in enumerate(definitions):
+        partie = Stakeholder(project_id=projet.id, code=code, name=nom,
+                             organisation=organisation, category=categorie, order_index=position)
+        db.add(partie)
+        db.flush()
+        objets[code] = partie
+
+    # Chaque activité : un approbateur unique (A), un ou plusieurs réalisateurs (R),
+    # les consultés (C) et les informés (I).
+    affectations = {
+        "A1.1.1": {"A": "CCP", "R": ["ICAT"], "C": ["RSE"], "I": ["COORD", "OP"]},
+        "A1.1.2": {"A": "CCP", "R": ["ICAT"], "C": ["RSE", "OP"], "I": ["COORD"]},
+        "A1.1.3": {"A": "CCP", "R": ["ICAT"], "C": ["RSE"], "I": ["COORD"]},
+        "A1.2.1": {"A": "CCP", "R": ["ICAT", "OP"], "C": ["RAF"], "I": ["COORD", "RSE"]},
+        "A1.2.2": {"A": "CCP", "R": ["OP"], "C": ["RAF"], "I": ["COORD", "RSE"]},
+        "A1.3.1": {"A": "GR", "R": ["ENT"], "C": ["RAF", "COORD"], "I": ["CP"]},
+        "A1.3.2": {"A": "GR", "R": ["ENT"], "C": ["RAF", "OP"], "I": ["COORD", "CP", "PTF"]},
+        "A2.1.1": {"A": "CCV", "R": ["ICAT"], "C": ["OP"], "I": ["COORD", "RSE"]},
+        "A2.1.2": {"A": "CCV", "R": ["ICAT"], "C": ["OP"], "I": ["COORD"]},
+        "A2.2.1": {"A": "GR", "R": ["ENT"], "C": ["CCV", "RAF"], "I": ["COORD", "CP"]},
+        "A2.2.2": {"A": "CCV", "R": ["ENT"], "C": ["RAF", "OP"], "I": ["COORD"]},
+        "A3.1.1": {"A": "COORD", "R": ["RSE"], "C": ["RAF"], "I": ["CP", "PTF"]},
+        "A3.1.2": {"A": "COORD", "R": ["RSE"], "C": ["CCP", "CCV"], "I": ["CP", "PTF"]},
+        "A3.1.3": {"A": "COORD", "R": ["RSE"], "C": ["CCP", "CCV", "OP"], "I": ["CP", "PTF"]},
+    }
+    for code_activite, roles in affectations.items():
+        activite = activites.get(code_activite)
+        if activite is None:
+            continue
+        couples = [(roles["A"], "A")] + [(c, "R") for c in roles.get("R", [])] + \
+                  [(c, "C") for c in roles.get("C", [])] + [(c, "I") for c in roles.get("I", [])]
+        deja = set()
+        for code_partie, role in couples:
+            partie = objets.get(code_partie)
+            if partie is None or partie.id in deja:
+                continue
+            deja.add(partie.id)
+            db.add(RaciAssignment(project_id=projet.id, activity_id=activite.id,
+                                  stakeholder_id=partie.id, role=role))
+    db.flush()
+
+
+def _indicateurs_processus(db: Session, projet: Project, elements: dict) -> None:
+    """Indicateurs d'activité et de processus, masqués tant que l'option n'est pas activée."""
+    definitions = [
+        ("IPR1", "Taux d'exécution du plan de travail annuel", "%", 0, 100, "Trimestrielle",
+         "Rapports d'activité trimestriels", "Suivi du PTBA", "Responsable S&E",
+         "Activités achevées / activités programmées × 100", "Moyenne"),
+        ("IPR2", "Délai moyen de production des rapports trimestriels", "Jour", 45, 15,
+         "Trimestrielle", "Registre de transmission des rapports", "Décompte administratif",
+         "Responsable S&E", "Moyenne des écarts entre échéance et date de transmission", "Moyenne"),
+        ("IPR3", "Taux de participation aux sessions de formation programmées", "%", 0, 90,
+         "Trimestrielle", "Fiches de présence", "Registre de formation", "Responsable Formation",
+         "Participants effectifs / participants attendus × 100", "Moyenne"),
+        ("IPR4", "Nombre de missions de supervision réalisées", "Nombre", 0, 60, "Trimestrielle",
+         "Rapports de mission", "Décompte documentaire", "Coordonnateur",
+         "Somme des missions effectuées", "Somme"),
+        ("IPR5", "Délai moyen de passation des marchés", "Jour", 120, 75, "Semestrielle",
+         "Dossiers de passation", "Décompte administratif", "Responsable administratif et financier",
+         "Moyenne des délais entre lancement et attribution", "Moyenne"),
+        ("IPR6", "Taux de complétude des données de suivi transmises dans les délais", "%", 0, 95,
+         "Trimestrielle", "Plateforme SEPIA", "Contrôle automatique", "Responsable S&E",
+         "Fiches transmises dans les délais / fiches attendues × 100", "Moyenne"),
+    ]
+    element = elements.get("P1.1")
+    for code, libelle, unite, reference, cible, frequence, source, methode, responsable, \
+            formule, agregation in definitions:
+        db.add(Indicator(
+            project_id=projet.id, element_id=element.id if element else None,
+            code=code, name=libelle, level="ACTIVITE", indicator_class="Processus",
+            indicator_type="Quantitatif", unit=unite, baseline_value=reference,
+            baseline_date=date(2024, 12, 31), target_value=cible, target_date=date(2029, 12, 31),
+            direction="Décroissant" if unite == "Jour" else "Croissant", frequency=frequence,
+            data_source=source, collection_method=methode, responsible=responsable,
+            formula=formule, aggregation=agregation, is_key=False,
+            definition=f"Indicateur de processus : {libelle.lower()}.",
+            disaggregation=[], cost_estimate=150_000,
+            reporting_level="Comité technique"))
+    db.flush()
 
 
 def _formulaires_demonstration(db: Session, projet: Project) -> None:

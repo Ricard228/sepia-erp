@@ -9,9 +9,9 @@ from ..crud import apply_payload, make_crud_router, serialize, serialize_many
 from ..database import get_db
 from ..models import (Activity, Assumption, BudgetLine, Form, FormQuestion, FormSubmission,
                       Indicator, IndicatorActual, IndicatorTarget, LogframeElement, Project,
-                      Risk, User, Zone)
+                      RaciAssignment, Risk, Stakeholder, User, Zone)
 from ..security import can_edit, current_user
-from ..services import analytics
+from ..services import analytics, planning
 
 router = APIRouter()
 
@@ -57,6 +57,13 @@ router.include_router(make_crud_router(
 router.include_router(make_crud_router(
     Zone, "/api/zones", "Zones d'intervention", order_by="order_index",
     search_fields=["name", "code"]))
+
+router.include_router(make_crud_router(
+    Stakeholder, "/api/stakeholders", "Parties prenantes", order_by="order_index",
+    search_fields=["name", "organisation"]))
+
+router.include_router(make_crud_router(
+    RaciAssignment, "/api/raci", "Matrice RACI", order_by="activity_id"))
 
 
 # --- Points d'entrée spécialisés ------------------------------------------
@@ -293,8 +300,78 @@ def donnees_gantt(project_id: int, db: Session = Depends(get_db),
         element = elements.get(a.element_id)
         ligne = serialize(a)
         ligne["resultat"] = f"{element.code or ''} {element.statement}"[:80] if element else None
+        ligne["duree_calculee"] = planning.duree_activite(a)
         lignes.append(ligne)
-    return {"activites": lignes, "synthese": analytics.synthese_activites(db, project_id)}
+    return {"activites": lignes, "synthese": analytics.synthese_activites(db, project_id),
+            "ordonnancement": planning.chemin_critique(db, project_id)}
+
+
+# --- Ordonnancement : chemin critique, PERT, WBS, RACI ---------------------
+@detail.get("/planning/chemin-critique/{project_id}")
+def api_chemin_critique(project_id: int, db: Session = Depends(get_db),
+                        user: User = Depends(current_user)):
+    """Ordonnancement au plus tôt et au plus tard, marges, chemin critique, durée du projet."""
+    return planning.chemin_critique(db, project_id)
+
+
+@detail.get("/planning/wbs/{project_id}")
+def api_wbs(project_id: int, db: Session = Depends(get_db),
+            user: User = Depends(current_user)):
+    """Organigramme des tâches : décomposition hiérarchique et consolidation des coûts."""
+    return planning.organigramme_taches(db, project_id)
+
+
+@detail.get("/planning/raci/{project_id}")
+def api_raci(project_id: int, db: Session = Depends(get_db),
+             user: User = Depends(current_user)):
+    """Matrice des responsabilités, charge par partie prenante et anomalies de cohérence."""
+    return planning.matrice_raci(db, project_id)
+
+
+@detail.post("/planning/raci/{project_id}/cellule")
+def definir_role_raci(project_id: int, payload: Dict[str, Any],
+                      db: Session = Depends(get_db), user: User = Depends(can_edit)):
+    """Attribue, modifie ou retire le rôle d'une partie prenante sur une activité."""
+    activity_id = payload.get("activity_id")
+    stakeholder_id = payload.get("stakeholder_id")
+    role = (payload.get("role") or "").strip().upper()
+    if not activity_id or not stakeholder_id:
+        raise HTTPException(status_code=422, detail="Activité et partie prenante obligatoires.")
+    if role and role not in planning.ROLES_RACI:
+        raise HTTPException(status_code=422,
+                            detail="Rôle invalide : utilisez R, A, C ou I, ou une valeur vide.")
+    existante = db.query(RaciAssignment).filter(
+        RaciAssignment.activity_id == activity_id,
+        RaciAssignment.stakeholder_id == stakeholder_id).first()
+    if not role:
+        if existante:
+            db.delete(existante)
+            db.commit()
+        return {"supprime": True, "activity_id": activity_id, "stakeholder_id": stakeholder_id}
+    if existante:
+        existante.role = role
+    else:
+        db.add(RaciAssignment(project_id=project_id, activity_id=activity_id,
+                              stakeholder_id=stakeholder_id, role=role))
+    db.commit()
+    return {"activity_id": activity_id, "stakeholder_id": stakeholder_id, "role": role}
+
+
+@detail.post("/planning/wbs/{project_id}/codifier")
+def codifier_wbs(project_id: int, db: Session = Depends(get_db),
+                 user: User = Depends(can_edit)):
+    """Inscrit le code WBS calculé sur chaque activité, pour usage dans les exports."""
+    arbre = planning.organigramme_taches(db, project_id)
+    compteur = 0
+    for ligne in arbre["lignes"]:
+        if ligne["type"] != "Lot de travail" or not ligne.get("id"):
+            continue
+        activite = db.get(Activity, ligne["id"])
+        if activite and activite.project_id == project_id:
+            activite.wbs_code = ligne["wbs"]
+            compteur += 1
+    db.commit()
+    return {"activites_codifiees": compteur, "nb_niveaux": arbre["nb_niveaux"]}
 
 
 router.include_router(detail)

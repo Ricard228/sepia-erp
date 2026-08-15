@@ -19,7 +19,7 @@ suivi-évaluation, tableaux de bord Excel et flux Power BI.
 | **Fiche projet** | Identification, ancrage institutionnel, théorie du changement, alignement stratégique (ODD, stratégies nationales) |
 | **Cadre logique** | Arborescence Impact → Effets → Produits → Activités, sources de vérification, hypothèses, responsables |
 | **Zones d'intervention** | Découpage géographique hiérarchisé, population, cible de bénéficiaires, coordonnées, responsable de zone |
-| **Chronogramme** | Diagramme de Gantt interactif, jalons, dépendances, détection automatique des retards |
+| **Chronogramme et ordonnancement** | Cinq onglets : diagramme de Gantt · **chemin critique et réseau PERT** (durée du projet, dates au plus tôt et au plus tard, marges) · **organigramme des tâches (WBS)** · **matrice RACI** éditable · liste des activités |
 | **PTBA / budget** | Lignes budgétaires détaillées, ventilation trimestrielle, engagements et décaissements |
 
 ### Collecte et suivi
@@ -32,7 +32,7 @@ suivi-évaluation, tableaux de bord Excel et flux Power BI.
 ### Analyse et évaluation
 | Module | Contenu |
 |---|---|
-| **Indicateurs** | Fiche métadonnée complète (définition, formule, désagrégations, référence, cible, règle d'agrégation, fréquence, source, méthode, responsable, coût) |
+| **Indicateurs** | Fiche métadonnée complète (définition, formule, désagrégations, référence, cible, règle d'agrégation, fréquence, source, méthode, responsable, coût) et **nature de l'indicateur** : résultat ou processus |
 | **Équité et désagrégation** | Ventilation consolidée par catégorie, **indice d'équité de genre**, écart à la parité, part des femmes par indicateur et par zone, détection des désagrégations manquantes |
 | **Qualité des indicateurs** | Diagnostic **SMART** critère par critère (contrôle automatique + revue manuelle), score du système, actions correctrices recommandées |
 | **Risques & hypothèses** | Registre coté probabilité × impact, matrice 5×5, risque résiduel, plans de contingence, suivi de validation des hypothèses |
@@ -42,7 +42,7 @@ suivi-évaluation, tableaux de bord Excel et flux Power BI.
 | Module | Contenu |
 |---|---|
 | **Rapports périodiques** | Génération des rapports **trimestriels, semestriels et annuels** avec aperçu à l'écran avant production |
-| **Livrables** | 22 documents Word / Excel / ZIP produits à la demande |
+| **Livrables** | 26 documents Word / Excel / ZIP produits à la demande |
 | **Power BI** | Flux temps réel et modèle en étoile, table de faits désagrégée et dimension géographique |
 
 ### Méthodologie de calcul de la performance
@@ -76,6 +76,50 @@ scores individuels ; chaque critère non satisfait produit une action correctric
 L'**indice de santé du projet** est une moyenne pondérée : résultats 45 %, exécution physique 30 %,
 exécution financière 25 %, comparée au pourcentage de temps écoulé.
 
+### Indicateurs d'activité et de processus (affichage optionnel)
+
+Un indicateur porte une **nature** : `Résultat` (il mesure un changement) ou `Processus` (il mesure
+la conduite de l'action — taux d'exécution du PTBA, délai de production des rapports, taux de
+participation, délai de passation des marchés). Les indicateurs de processus alourdissent la
+lecture du dispositif et ne sont pertinents que sur certains projets : leur affichage est donc
+commandé par une option du projet, `show_process_indicators`, activable d'une case à cocher depuis
+la vue Indicateurs ou la fiche du projet.
+
+Désactivés, ils **restent enregistrés** — mesures et cibles comprises — mais sont exclus des
+tableaux de bord, des analyses d'équité et de qualité, des rapports périodiques et des livrables.
+Le nombre d'indicateurs masqués reste affiché, afin que l'option ne dissimule jamais l'existence
+des données.
+
+### Ordonnancement : chemin critique, PERT, WBS et RACI
+
+**Chemin critique (CPM).** Les activités portent des antécédents (relation fin-début) et une durée
+— imposée, ou déduite des dates. Un tri topologique détecte les circuits ; une passe avant calcule
+les dates au plus tôt, une passe arrière les dates au plus tard. La **marge totale** est le retard
+admissible sans décaler la fin du projet, la **marge libre** celui admissible sans décaler
+l'activité suivante. Une activité de marge nulle est critique. La **durée totale du projet** est la
+date de fin au plus tôt la plus tardive ; elle est comparée à la date de clôture planifiée, et
+l'écart est signalé.
+
+La plateforme signale également les **incohérences de planification** : un antécédent qui s'achève
+après le début planifié de son successeur rend le calendrier saisi et le lien d'antécédence
+contradictoires.
+
+**Réseau PERT.** Représentation « activité sur nœud » : chaque activité est une boîte portant ses
+dates au plus tôt et au plus tard, sa durée et sa marge ; les flèches figurent les antécédences et
+le chemin critique est tracé en rouge. Les activités d'un même **rang** sont indépendantes et
+peuvent être conduites en parallèle.
+
+**Organigramme des tâches (WBS).** Décomposition hiérarchique déduite de la chaîne de résultats :
+effets → composantes, produits → sous-composantes, activités → lots de travail. Codification
+automatique (1, 1.1, 1.1.1), consolidation ascendante des coûts, durées et avancements, et
+dictionnaire des lots. Les activités non rattachées sont regroupées dans un lot « Gestion,
+coordination et suivi-évaluation ».
+
+**Matrice RACI.** Grille activités × parties prenantes éditable directement en ligne :
+**R** réalise, **A** approuve et rend compte, **C** est consulté avant la décision, **I** est
+informé après. Deux règles sont contrôlées — exactement un A par activité, au moins un R — et la
+charge par acteur est calculée, avec alerte sur les goulots d'étranglement décisionnels.
+
 ### Import / export
 
 - **Import Excel** : reconnaissance souple des onglets et des intitulés de colonnes
@@ -100,10 +144,11 @@ sepia-erp/
 │   ├── main.py               FastAPI : montage des routeurs, service de l'interface, sonde de santé
 │   ├── config.py             Configuration et référentiels métier
 │   ├── database.py           Moteur SQLAlchemy (SQLite en local, PostgreSQL en production)
-│   ├── models.py             16 entités : projets, cadre logique, indicateurs, cibles,
+│   ├── models.py             18 entités : projets, cadre logique, indicateurs, cibles,
 │   │                         réalisations (désagrégées et localisées), zones, risques,
-│   │                         hypothèses, activités, budget, formulaires, questions,
-│   │                         réponses, utilisateurs, audit
+│   │                         hypothèses, activités, budget, parties prenantes,
+│   │                         affectations RACI, formulaires, questions, réponses,
+│   │                         utilisateurs, audit
 │   ├── security.py           PBKDF2 + jetons signés HMAC (bibliothèque standard uniquement)
 │   ├── crud.py               Fabrique de routeurs CRUD génériques et (dé)sérialisation
 │   ├── seed.py               Compte administrateur et projet de démonstration complet
@@ -112,8 +157,10 @@ sepia-erp/
 │       ├── analytics.py      Moteur de performance, règles d'agrégation, équité de genre,
 │       │                     consolidation par zone et par activité, qualité SMART,
 │       │                     analyses périodées, alertes, portefeuille
-│       ├── excel_export.py   12 classeurs Excel mis en forme (XlsxWriter)
-│       ├── word_export.py    8 documents Word (python-docx)
+│       ├── planning.py       Chemin critique (CPM), réseau PERT, organigramme des
+│       │                     tâches (WBS) et matrice des responsabilités (RACI)
+│       ├── excel_export.py   15 classeurs Excel mis en forme (XlsxWriter)
+│       ├── word_export.py    9 documents Word (python-docx)
 │       ├── xlsform.py        Génération XLSForm KoboToolbox / ODK
 │       └── importer.py       Analyseurs Excel et Word tolérants
 ├── static/                   Interface web-mobile : HTML + CSS + JavaScript natif,
@@ -129,7 +176,7 @@ sepia-erp/
 **Choix structurants**
 
 - **Zéro dépendance front-end** : les graphiques (anneau, barres, courbes, jauge, Gantt, matrice
-  de risques) sont produits en SVG par `charts.js`. Aucun CDN, aucun `npm install`, aucun bundler :
+  de risques, réseau PERT, organigramme WBS) sont produits en SVG par `charts.js`. Aucun CDN, aucun `npm install`, aucun bundler :
   le déploiement se réduit à `pip install -r requirements.txt`.
 - **Authentification sans dépendance** : hachage PBKDF2-SHA256 (180 000 itérations) et jetons
   signés HMAC-SHA256 issus de la bibliothèque standard — pas de `passlib`, `bcrypt` ni `python-jose`
@@ -180,6 +227,10 @@ Au premier démarrage, la base est créée et un projet de démonstration comple
 | Cadre de rendement | Excel + Word | PMF : taux de période, progression finale, statuts, sources, coûts |
 | Cadre de suivi des indicateurs (IPTT) | Excel | Cibles/réalisations par période, mise en forme conditionnelle |
 | Chronogramme | Excel | Gantt mensuel coloré selon l'état d'avancement |
+| **Chemin critique et réseau PERT** | Excel | Ordonnancement CPM, marges, durée du projet, activités par rang |
+| **Organigramme des tâches (WBS)** | Excel | Décomposition codifiée, coûts consolidés, dictionnaire des lots |
+| **Matrice RACI** | Excel | Matrice activités × acteurs, charge par partie prenante, contrôle de cohérence |
+| **Organisation et ordonnancement** | Word | Document réunissant WBS, chemin critique, réseau PERT et matrice RACI |
 | PTBA | Excel | Budget détaillé, ventilation trimestrielle, synthèse graphique |
 | Registre des risques | Excel + Word | Registre coté, matrice 5×5, plans de contingence |
 | Fiches métadonnées des indicateurs | Word | Une fiche par indicateur avec séries périodiques |
@@ -269,6 +320,11 @@ GET    /api/analyse/smart/{id}             Diagnostic SMART du système d'indica
 POST   /api/indicators/{id}/smart          Enregistrement d'une revue SMART
 GET    /api/analyse/periode/{id}?periode=  Photographie d'une période de rapportage
 GET    /api/analyse/periodes/{id}          Périodes existantes et suggérées
+GET    /api/planning/chemin-critique/{id}  Ordonnancement CPM, marges, durée du projet
+GET    /api/planning/wbs/{id}              Organigramme des tâches consolidé
+POST   /api/planning/wbs/{id}/codifier     Inscription des codes WBS sur les activités
+GET    /api/planning/raci/{id}             Matrice RACI, charge par acteur, anomalies
+POST   /api/planning/raci/{id}/cellule     Attribution ou retrait d'un rôle RACI
 POST   /api/imports/excel/{id}             Import d'un classeur
 POST   /api/imports/word/analyser          Analyse d'un document Word
 POST   /api/imports/kobo/{form_id}         Réinjection de données collectées

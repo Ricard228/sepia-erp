@@ -339,7 +339,9 @@ def construire(chemin_sortie: str) -> str:
              ["Planification", "Zones d'intervention", "Découpage géographique hiérarchisé, "
                                                        "population, cible de bénéficiaires, "
                                                        "coordonnées, responsable"],
-             ["Planification", "Chronogramme", "Diagramme de Gantt, jalons, dépendances, retards"],
+             ["Planification", "Chronogramme et ordonnancement",
+              "Gantt, chemin critique et durée du projet, réseau PERT, organigramme des tâches "
+              "(WBS), matrice des responsabilités (RACI)"],
              ["Planification", "PTBA et budget", "Lignes budgétaires, ventilation trimestrielle, "
                                                  "engagements et décaissements"],
              ["Collecte et suivi", "Saisie des réalisations", "Saisie temps réel : période, zone, "
@@ -444,7 +446,7 @@ def construire(chemin_sortie: str) -> str:
     # ------------------------------------------------- 4. Modèle de données
     titre1(document, "4. Modèle de données")
     para(document,
-         "Le modèle comprend seize entités. Sa structure reflète directement la logique du "
+         "Le modèle comprend dix-huit entités. Sa structure reflète directement la logique du "
          "suivi-évaluation : un projet porte une chaîne de résultats et un découpage territorial ; "
          "chaque résultat porte des indicateurs ; chaque indicateur porte des cibles périodiques et "
          "des réalisations mesurées, elles-mêmes localisées dans une zone, rattachées à l'activité "
@@ -469,6 +471,11 @@ def construire(chemin_sortie: str) -> str:
              ["Zone", "Zone d'intervention",
               "code, nom, niveau administratif, zone parente, population, cible de bénéficiaires, "
               "latitude, longitude, responsable"],
+             ["Stakeholder", "Partie prenante",
+              "code, fonction ou structure, organisation, catégorie, contact — colonne de la "
+              "matrice RACI"],
+             ["RaciAssignment", "Affectation RACI",
+              "activité, partie prenante, rôle (R, A, C ou I), commentaire"],
              ["Risk", "Risque du registre",
               "code, catégorie, énoncé, cause, conséquence, probabilité, impact, atténuation, "
               "contingence, risque résiduel, porteur, statut, date de revue"],
@@ -585,15 +592,27 @@ def construire(chemin_sortie: str) -> str:
           "Les hypothèses suivent un cycle de validation en quatre états : non vérifiée, "
           "partiellement vérifiée, vérifiée, invalidée. Une hypothèse invalidée déclenche une "
           "alerte, car elle remet en cause la logique d'intervention."]),
-        ("5.7 Chronogramme et activités",
-         "Diagramme de Gantt mensuel construit dynamiquement à partir des dates d'exécution. Les "
-         "barres sont colorées selon l'état : bleu pour les activités planifiées ou en cours, "
-         "vert pour les activités achevées, rouge pour celles dont l'échéance est dépassée ; les "
-         "jalons sont matérialisés par un losange et la date du jour par une ligne verticale.",
-         ["La part remplie de chaque barre représente le pourcentage d'avancement déclaré.",
-          "Une section dédiée récapitule les activités en retard, avec le nombre de jours de "
-          "dépassement et le responsable concerné.",
-          "L'export Excel produit un Gantt imprimable en A3 paysage, avec légende."]),
+        ("5.7 Chronogramme et ordonnancement",
+         "Module organisé en cinq onglets : diagramme de Gantt, chemin critique et réseau PERT, "
+         "organigramme des tâches, matrice RACI et liste des activités. Un bandeau permanent "
+         "affiche la durée calculée du projet, le nombre d'activités critiques, la marge moyenne "
+         "et l'avancement physique.",
+         ["Diagramme de Gantt mensuel construit dynamiquement : bleu pour les activités planifiées "
+          "ou en cours, vert pour les activités achevées, rouge pour celles dont l'échéance est "
+          "dépassée ; les jalons sont matérialisés par un losange et la date du jour par une ligne "
+          "verticale. La part remplie de chaque barre représente l'avancement déclaré.",
+          "Le chemin critique identifie la séquence d'activités sans marge : tout retard sur l'une "
+          "d'elles décale d'autant la date d'achèvement du projet. Son coût et son avancement "
+          "moyen sont calculés.",
+          "Le réseau PERT présente chaque activité sous forme de nœud portant sa durée, ses dates "
+          "au plus tôt et au plus tard et sa marge ; les activités d'un même rang peuvent être "
+          "conduites en parallèle.",
+          "L'organigramme des tâches décompose le projet en composantes, sous-composantes et lots "
+          "de travail, avec codification automatique et consolidation ascendante des coûts.",
+          "La matrice RACI, éditable cellule par cellule, attribue à chaque activité un rôle par "
+          "partie prenante et contrôle la cohérence de l'ensemble.",
+          "Une section récapitule les activités en retard, avec le nombre de jours de dépassement "
+          "et le responsable concerné."]),
         ("5.8 PTBA et budget",
          "Saisie et suivi des lignes budgétaires. Chaque ligne combine une quantité, un coût "
          "unitaire et un nombre de répétitions, dont le produit constitue le montant planifié ; "
@@ -840,7 +859,105 @@ def construire(chemin_sortie: str) -> str:
          "non satisfait produit une action correctrice nommée, ce qui transforme le diagnostic en "
          "plan de travail.")
 
-    titre2(document, "6.9 Articulation entre risques et hypothèses")
+    titre2(document, "6.9 Indicateurs de résultat et indicateurs de processus")
+    para(document,
+         "Un indicateur porte une nature : il mesure soit un changement produit chez les "
+         "bénéficiaires — c'est un indicateur de résultat —, soit la conduite de l'action "
+         "elle-même — c'est un indicateur de processus. Les seconds documentent le taux "
+         "d'exécution du plan de travail, les délais de production des rapports ou de passation "
+         "des marchés, le taux de participation aux activités programmées ou la complétude des "
+         "données transmises.")
+    para(document,
+         "Cette distinction est méthodologiquement importante : mêler indicateurs de résultat et "
+         "de processus dans un même tableau de bord conduit à surestimer la performance, car les "
+         "indicateurs de processus sont structurellement plus faciles à atteindre. Leur affichage "
+         "est donc commandé par une option activable projet par projet. Lorsqu'elle est "
+         "désactivée, les indicateurs de processus restent enregistrés — avec leurs cibles et "
+         "leurs mesures — mais sont exclus des tableaux de bord, des analyses et des livrables. "
+         "Le nombre d'indicateurs masqués demeure affiché, afin que l'option ne dissimule jamais "
+         "l'existence des données.")
+    tableau(document, ["Nature", "Ce qu'elle mesure", "Exemples"],
+            [["Résultat", "Le changement produit chez les bénéficiaires",
+              "Rendement moyen du maïs, revenu agricole par exploitation, incidence de la "
+              "pauvreté, nombre de producteurs formés"],
+             ["Processus", "La conduite de l'action et la qualité de la gestion",
+              "Taux d'exécution du PTBA, délai de production des rapports trimestriels, taux de "
+              "participation aux formations, délai de passation des marchés, complétude des "
+              "données de suivi"]],
+            largeurs=[3, 5.5, 8], taille=9.5)
+
+    titre2(document, "6.10 Ordonnancement : chemin critique et réseau PERT")
+    para(document,
+         "Les activités du chronogramme portent des antécédents, exprimés en relations fin-début : "
+         "une activité ne peut démarrer qu'une fois ses antécédents achevés. Leur durée est soit "
+         "imposée, soit déduite des dates de début et de fin.")
+    para(document,
+         "Le calcul procède en trois temps. Un tri topologique ordonne les activités et détecte "
+         "les circuits de dépendances. Une passe avant établit, pour chaque activité, la date de "
+         "début et de fin au plus tôt. Une passe arrière établit les dates au plus tard "
+         "compatibles avec l'achèvement du projet à la date calculée.")
+    tableau(document, ["Notion", "Définition", "Usage en gestion de projet"],
+            [["Durée totale du projet", "Date de fin au plus tôt la plus tardive du réseau",
+              "Comparée à la date de clôture planifiée ; l'écart est signalé"],
+             ["Marge totale", "Retard admissible sans décaler la fin du projet",
+              "Une marge nulle rend l'activité critique"],
+             ["Marge libre", "Retard admissible sans décaler l'activité suivante",
+              "Indique la souplesse réelle dont dispose le responsable de l'activité"],
+             ["Chemin critique", "Séquence continue d'activités à marge nulle",
+              "Concentre l'attention de la supervision : tout retard s'y répercute intégralement"],
+             ["Rang PERT", "Position de l'activité dans le réseau",
+              "Les activités d'un même rang sont indépendantes et parallélisables"]],
+            largeurs=[3.5, 6, 7], taille=9.5)
+    encadre(document, "Contrôle de cohérence",
+            "La plateforme signale les antécédents qui s'achèvent après le début planifié de leur "
+            "successeur : le calendrier saisi et le lien d'antécédence sont alors contradictoires. "
+            "C'est l'incohérence la plus fréquente des chronogrammes construits sous tableur, où "
+            "les dates sont saisies indépendamment des liens logiques entre activités.")
+
+    titre2(document, "6.11 Organigramme des tâches (WBS)")
+    para(document,
+         "L'organigramme des tâches décompose le projet en éléments de plus en plus fins, "
+         "jusqu'aux lots de travail élémentaires. La plateforme le déduit de la chaîne de "
+         "résultats déjà saisie : les effets constituent les composantes, les produits les "
+         "sous-composantes, les activités les lots de travail. Cette dérivation garantit la "
+         "cohérence entre le cadre logique et l'organisation opérationnelle — deux instruments "
+         "trop souvent construits séparément et divergents.")
+    for texte in [
+        "La codification est automatique et hiérarchique : 1, 1.1, 1.1.1, 1.1.1.1. Elle peut être "
+        "inscrite sur les activités pour être reprise dans les autres livrables.",
+        "Les coûts, durées et avancements sont consolidés de bas en haut : chaque niveau totalise "
+        "ses descendants, ce qui permet de vérifier la cohérence du budget par composante.",
+        "Les activités non rattachées à un produit sont regroupées dans un lot « Gestion, "
+        "coordination et suivi-évaluation », conformément à la pratique courante.",
+        "Un dictionnaire des lots de travail accompagne l'organigramme : il précise pour chaque "
+        "lot son livrable attendu, son responsable, sa durée, son coût et son échéance.",
+    ]:
+        puce(document, texte)
+
+    titre2(document, "6.12 Matrice des responsabilités (RACI)")
+    para(document,
+         "La matrice RACI croise les activités et les parties prenantes et attribue à chaque "
+         "intersection un rôle. Elle répond à la question qui, en gestion de projet, produit le "
+         "plus de blocages : qui décide, qui exécute, qui doit être consulté et qui doit être "
+         "informé.")
+    tableau(document, ["Rôle", "Signification", "Règle appliquée par la plateforme"],
+            [["R — Responsible", "Réalise le travail",
+              "Plusieurs réalisateurs sont possibles ; au moins un est exigé par activité"],
+             ["A — Accountable", "Approuve et rend compte",
+              "Un seul approbateur par activité : la responsabilité ne se partage pas"],
+             ["C — Consulted", "Est consulté avant la décision",
+              "La consultation est bilatérale et intervient en amont"],
+             ["I — Informed", "Est informé après la décision",
+              "L'information est unilatérale et intervient en aval"]],
+            largeurs=[3.5, 4.5, 8.5], taille=9.5)
+    para(document,
+         "Deux contrôles automatiques sont appliqués : l'absence d'approbateur laisse une activité "
+         "sans responsable identifié, la présence de plusieurs approbateurs dilue la "
+         "responsabilité. La charge de chaque acteur est en outre calculée : une partie prenante "
+         "qui approuve un nombre disproportionné d'activités constitue un goulot d'étranglement "
+         "décisionnel, signalé comme tel.")
+
+    titre2(document, "6.13 Articulation entre risques et hypothèses")
     para(document,
          "Le cadre logique distingue les hypothèses — conditions externes nécessaires à la "
          "réalisation de la chaîne de résultats — des risques, qui en sont la formulation "
@@ -928,7 +1045,7 @@ def construire(chemin_sortie: str) -> str:
     # ------------------------------------------------- 8. Livrables
     titre1(document, "8. Livrables générés automatiquement")
     para(document,
-         "Vingt-deux livrables sont produits à la demande, à partir des données saisies. Tous sont "
+         "Vingt-six livrables sont produits à la demande, à partir des données saisies. Tous sont "
          "modifiables après téléchargement, ce qui préserve la liberté rédactionnelle des équipes "
          "tout en supprimant le travail de mise en forme.")
     tableau(document, ["Livrable", "Format", "Contenu et usage"],
@@ -943,6 +1060,16 @@ def construire(chemin_sortie: str) -> str:
               "Cibles et réalisations par période, taux par période, mise en forme conditionnelle"],
              ["Chronogramme", "Excel", "Diagramme de Gantt mensuel coloré selon l'avancement, "
                                        "avec légende"],
+             ["Chemin critique et réseau PERT", "Excel",
+              "Ordonnancement CPM : dates au plus tôt et au plus tard, marges, durée du "
+              "projet, activités par rang PERT"],
+             ["Organigramme des tâches (WBS)", "Excel",
+              "Décomposition codifiée, coûts consolidés, dictionnaire des lots de travail"],
+             ["Matrice des responsabilités (RACI)", "Excel",
+              "Matrice activités × acteurs, charge par partie prenante, contrôle de cohérence"],
+             ["Organisation et ordonnancement", "Word",
+              "Document réunissant l'organigramme des tâches, le chemin critique, le réseau "
+              "PERT et la matrice RACI"],
              ["Plan de travail et budget annuel", "Excel",
               "Budget détaillé, ventilation trimestrielle, formules de totalisation, synthèse "
               "graphique par catégorie"],
@@ -1249,10 +1376,17 @@ def construire(chemin_sortie: str) -> str:
          "périodiques » en choisissant la granularité. La plateforme interpole linéairement entre "
          "la référence et la cible finale ; les valeurs obtenues doivent ensuite être ajustées "
          "pour tenir compte du rythme réel de montée en charge du projet."),
-        ("Saisir le chronogramme",
+        ("Saisir le chronogramme et ordonnancer",
          "Créer les activités, en les rattachant aux produits du cadre logique, avec dates, "
-         "responsables et coûts prévus. Marquer les jalons, qui structureront la lecture du "
-         "diagramme de Gantt."),
+         "responsables et coûts prévus. Marquer les jalons. Renseigner les antécédents de "
+         "chaque activité : ils déclenchent le calcul du chemin critique, de la durée du "
+         "projet et du réseau PERT. Vérifier ensuite l'organigramme des tâches et lancer la "
+         "codification WBS."),
+        ("Établir la matrice des responsabilités",
+         "Recenser les parties prenantes du projet dans l'onglet RACI, puis attribuer à "
+         "chacune un rôle sur chaque activité : un seul approbateur, au moins un réalisateur. "
+         "Traiter les anomalies signalées avant de soumettre la matrice au comité de "
+         "pilotage."),
         ("Saisir le PTBA",
          "Créer les lignes budgétaires, rattachées aux activités, avec quantité, coût unitaire et "
          "ventilation trimestrielle. Cette ventilation alimente la programmation présentée au "
@@ -1469,6 +1603,21 @@ def construire(chemin_sortie: str) -> str:
                                     "cible fixée pour cette zone"],
              ["Zone d'intervention", "Unité géographique de mise en œuvre et de consolidation des "
                                      "données, organisée en hiérarchie administrative"],
+             ["Chemin critique", "Séquence continue d'activités sans marge : tout retard sur "
+                                 "l'une d'elles décale la fin du projet"],
+             ["Marge totale", "Retard admissible sur une activité sans décaler l'achèvement du "
+                              "projet"],
+             ["Marge libre", "Retard admissible sans décaler l'activité suivante"],
+             ["PERT", "Program Evaluation and Review Technique : représentation en réseau des "
+                      "activités et de leurs antécédences"],
+             ["WBS", "Work Breakdown Structure, organigramme des tâches : décomposition "
+                     "hiérarchique du projet en lots de travail"],
+             ["Lot de travail", "Élément élémentaire du WBS, doté d'un livrable, d'un "
+                                "responsable, d'une durée et d'un coût"],
+             ["RACI", "Matrice des responsabilités : qui réalise (R), approuve (A), est consulté "
+                      "(C) et est informé (I)"],
+             ["Indicateur de processus", "Indicateur mesurant la conduite de l'action (exécution, "
+                                         "délais, participation) plutôt que le changement produit"],
              ["GAR", "Gestion axée sur les résultats : approche centrée sur l'atteinte de "
                      "résultats mesurables"],
              ["SMART", "Critères de qualité d'un indicateur : spécifique, mesurable, atteignable, "
@@ -1501,6 +1650,7 @@ def construire(chemin_sortie: str) -> str:
         "│   │   └── powerbi.py           Flux de business intelligence",
         "│   └── services/",
         "│       ├── analytics.py         Moteur de performance",
+        "│       ├── planning.py          Chemin critique, PERT, WBS et matrice RACI",
         "│       ├── excel_export.py      Générateurs Excel",
         "│       ├── word_export.py       Générateurs Word",
         "│       ├── xlsform.py           Générateur XLSForm",
@@ -1548,6 +1698,11 @@ def construire(chemin_sortie: str) -> str:
              ["Niveaux de zone", "Pays, région, préfecture, commune, canton, village, site"],
              ["Règles d'agrégation", "Somme, moyenne, dernière valeur, maximum"],
              ["Types de rapport périodique", "Trimestriel, semestriel, annuel"],
+             ["Nature des indicateurs", "Résultat, processus"],
+             ["Rôles RACI", "R (réalise), A (approuve), C (consulté), I (informé)"],
+             ["Catégories de parties prenantes",
+              "Interne, tutelle, partenaire d'exécution, prestataire, bailleur, bénéficiaire, "
+              "collectivité"],
              ["Unités de mesure", "Nombre, pourcentage, ratio, score, indice, tonne, hectare, "
                                   "kilomètre, FCFA, USD, EUR, jour, mois, t/ha, kg, litre"],
              ["Types de formulaire", "Questionnaire, fiche de suivi, grille d'entretien, grille "

@@ -225,7 +225,11 @@
     { nom: 'total_budget', libelle: 'Budget total', type: 'number', largeur: 'courte', section: 'Cycle de vie et finances' },
     { nom: 'counterpart_budget', libelle: 'Contrepartie nationale', type: 'number', largeur: 'courte', section: 'Cycle de vie et finances' },
     { nom: 'theory_of_change', libelle: 'Théorie du changement', type: 'textarea', lignes: 5, section: 'Cadrage stratégique' },
-    { nom: 'me_approach', libelle: 'Approche de suivi-évaluation retenue', type: 'textarea', lignes: 5, section: 'Cadrage stratégique' }
+    { nom: 'me_approach', libelle: 'Approche de suivi-évaluation retenue', type: 'textarea', lignes: 5, section: 'Cadrage stratégique' },
+    { nom: 'show_process_indicators', libelle: 'Indicateurs d\'activité et de processus',
+      type: 'checkbox', section: 'Options d\'affichage',
+      texteCase: 'Afficher les indicateurs d\'activité / de processus dans les tableaux de bord, analyses et livrables',
+      aide: 'Les indicateurs de processus mesurent la conduite de l\'action (taux d\'exécution, délais, participation) plutôt que le changement produit. Désactivés, ils restent enregistrés mais n\'alourdissent pas la lecture du dispositif.' }
   ];
 
   function champsProjet() {
@@ -492,6 +496,10 @@
       { nom: 'code', libelle: 'Code', largeur: 'courte', section: 'Identification' },
       { nom: 'level', libelle: 'Niveau', type: 'select', largeur: 'courte', section: 'Identification',
         options: ref('niveaux').map((n) => ({ valeur: n.code, libelle: n.libelle })) },
+      { nom: 'indicator_class', libelle: 'Nature de l\'indicateur', type: 'select',
+        largeur: 'courte', section: 'Identification',
+        options: ['Résultat', 'Processus'],
+        aide: '« Processus » mesure la conduite de l\'action (exécution, délais, participation). Son affichage dépend de l\'option activée sur le projet.' },
       { nom: 'name', libelle: 'Libellé de l\'indicateur', obligatoire: true, section: 'Identification' },
       { nom: 'element_id', libelle: 'Résultat rattaché', type: 'select', section: 'Identification',
         options: (elements || []).map((e) => ({ valeur: e.id, libelle: (e.code || '') + ' — ' + e.statement.substring(0, 70) })) },
@@ -658,8 +666,13 @@
     },
     rendre: async function (conteneur) {
       if (!projet()) { conteneur.innerHTML = exigeProjet(); return; }
-      const d = await S.API.get('/api/dashboard/' + projet());
+      const [d, projetCourant] = await Promise.all([
+        S.API.get('/api/dashboard/' + projet()),
+        S.API.get('/api/projects/' + projet())
+      ]);
       const lignes = d.indicateurs.lignes;
+      const processusActifs = !!projetCourant.show_process_indicators;
+      const nbProcessus = d.indicateurs.nb_processus_disponibles || 0;
       const html = '<div class="barre-outils">' +
         '<input type="search" id="recherche-indicateur" placeholder="Rechercher un indicateur…">' +
         '<select id="filtre-niveau"><option value="">Tous les niveaux</option>' +
@@ -668,18 +681,49 @@
         '<select id="filtre-statut"><option value="">Tous les statuts</option>' +
         ['Atteint', 'En bonne voie', 'À surveiller', 'Critique', 'Non renseigné']
           .map((s) => '<option>' + s + '</option>').join('') + '</select>' +
+        '<select id="filtre-classe"><option value="">Toutes natures</option>' +
+        '<option value="Résultat">Indicateurs de résultat</option>' +
+        '<option value="Processus">Indicateurs de processus</option></select>' +
+        '<label style="display:flex;align-items:center;gap:.35rem;font-size:.78rem;color:#5F6368">' +
+        '<input type="checkbox" id="bascule-processus"' + (processusActifs ? ' checked' : '') +
+        '> Afficher les indicateurs d\'activité / processus' +
+        (nbProcessus ? ' (' + nbProcessus + ')' : '') + '</label>' +
         '<span style="font-size:.78rem;color:#5F6368">' + lignes.length + ' indicateurs — taux moyen ' +
         (d.indicateurs.taux_moyen === null ? '—' : S.nombre(d.indicateurs.taux_moyen, 1) + ' %') + '</span>' +
-        '</div><div id="liste-indicateurs"></div>';
+        '</div>' +
+        (!processusActifs && nbProcessus ?
+          '<div class="alerte alerte-info"><span class="type">Masqués</span><span>' + nbProcessus +
+          ' indicateur(s) d\'activité / de processus sont enregistrés mais non affichés. ' +
+          'Activez la case ci-dessus pour les intégrer aux tableaux de bord, analyses et ' +
+          'livrables.</span></div>' : '') +
+        '<div id="liste-indicateurs"></div>';
       conteneur.innerHTML = S.carte('Liste des indicateurs', html);
+
+      document.getElementById('bascule-processus').addEventListener('change', async function (e) {
+        S.basculeChargement(true);
+        try {
+          await S.API.put('/api/projects/' + projet(),
+            { show_process_indicators: e.target.checked });
+          S.notifier(e.target.checked ?
+            'Indicateurs de processus affichés dans l\'ensemble de la plateforme.' :
+            'Indicateurs de processus masqués (les données restent enregistrées).', 'succes');
+          global.Application.rafraichir();
+        } catch (erreur) {
+          S.notifier(erreur.message, 'erreur');
+        } finally {
+          S.basculeChargement(false);
+        }
+      });
 
       function afficher() {
         const recherche = (document.getElementById('recherche-indicateur').value || '').toLowerCase();
         const niveau = document.getElementById('filtre-niveau').value;
         const statut = document.getElementById('filtre-statut').value;
+        const classe = document.getElementById('filtre-classe').value;
         const filtrees = lignes.filter(function (l) {
           if (niveau && l.level !== niveau) return false;
           if (statut && l.statut !== statut) return false;
+          if (classe && (l.classe || 'Résultat') !== classe) return false;
           if (recherche && (l.name + ' ' + (l.code || '')).toLowerCase().indexOf(recherche) < 0) return false;
           return true;
         });
@@ -687,6 +731,9 @@
         zone.innerHTML = S.tableau([
           { titre: 'Code', rendu: (l) => (l.is_key ? '⭐ ' : '') + ech(l.code || '') },
           { cle: 'name', titre: 'Indicateur' },
+          { titre: 'Nature', classe: 'centre', rendu: (l) => (l.classe === 'Processus' ?
+            '<span class="etiquette" style="background:#7B1FA2">Processus</span>' :
+            '<span class="etiquette pale">Résultat</span>') },
           { titre: 'Niveau', classe: 'centre', rendu: (l) => badgeNiveau(l.level) },
           { cle: 'unit', titre: 'Unité', classe: 'centre' },
           { titre: 'Référence', classe: 'nombre', rendu: (l) => S.nombre(l.baseline_value, 2) },
@@ -714,9 +761,8 @@
           })
         });
       }
-      ['recherche-indicateur', 'filtre-niveau', 'filtre-statut'].forEach(function (id) {
-        document.getElementById(id).addEventListener('input', afficher);
-      });
+      ['recherche-indicateur', 'filtre-niveau', 'filtre-statut', 'filtre-classe'].forEach(
+        function (id) { document.getElementById(id).addEventListener('input', afficher); });
       afficher();
     }
   };
@@ -975,20 +1021,34 @@
       { nom: 'planned_cost', libelle: 'Coût prévu', type: 'number', largeur: 'courte' },
       { nom: 'actual_cost', libelle: 'Coût réel', type: 'number', largeur: 'courte' },
       { nom: 'year', libelle: 'Année de programmation', type: 'number', largeur: 'courte' },
-      { nom: 'dependencies', libelle: 'Activités prérequises (codes)', largeur: 'courte' },
+      { nom: 'dependencies', libelle: 'Activités prérequises (codes séparés par des virgules)',
+        aide: 'Relation fin-début : cette activité ne démarre qu\'une fois les activités citées achevées. Alimente le chemin critique et le réseau PERT.' },
+      { nom: 'duration_days', libelle: 'Durée imposée (jours)', type: 'number', largeur: 'courte',
+        aide: 'Laisser vide pour déduire la durée des dates de début et de fin.' },
+      { nom: 'wbs_code', libelle: 'Code WBS', largeur: 'courte',
+        aide: 'Renseigné automatiquement par la fonction de codification de l\'organigramme.' },
       { nom: 'milestone', libelle: 'Jalon', type: 'checkbox', texteCase: 'Cette activité constitue un jalon' },
       { nom: 'deliverable', libelle: 'Livrable attendu', type: 'textarea', lignes: 2 }
     ];
   }
 
   const activites = {
-    titre: 'Chronogramme et activités',
-    sousTitre: 'Planification opérationnelle et suivi de l\'exécution physique',
+    titre: 'Chronogramme et ordonnancement',
+    sousTitre: 'Gantt, chemin critique, réseau PERT, organigramme des tâches et matrice RACI',
+    onglet: 'gantt',
     actions: () => '<button class="btn btn-primaire btn-petit" data-barre="ajouter">➕ Activité</button>' +
-      '<button class="btn btn-secondaire btn-petit" data-barre="excel">⬇️ Gantt Excel</button>',
+      '<button class="btn btn-secondaire btn-petit" data-barre="excel">⬇️ Gantt</button>' +
+      '<button class="btn btn-secondaire btn-petit" data-barre="cpm">⬇️ Chemin critique</button>' +
+      '<button class="btn btn-secondaire btn-petit" data-barre="wbs">⬇️ WBS</button>' +
+      '<button class="btn btn-secondaire btn-petit" data-barre="raci">⬇️ RACI</button>' +
+      '<button class="btn btn-secondaire btn-petit" data-barre="organisation">⬇️ Word</button>',
     gestionnairesBarre: {
       ajouter: () => activites.ouvrirFormulaire(null),
-      excel: () => S.API.telecharger('/api/exports/' + projet() + '/chronogramme-excel')
+      excel: () => S.API.telecharger('/api/exports/' + projet() + '/chronogramme-excel'),
+      cpm: () => S.API.telecharger('/api/exports/' + projet() + '/chemin-critique-excel'),
+      wbs: () => S.API.telecharger('/api/exports/' + projet() + '/wbs-excel'),
+      raci: () => S.API.telecharger('/api/exports/' + projet() + '/raci-excel'),
+      organisation: () => S.API.telecharger('/api/exports/' + projet() + '/organisation-word')
     },
     ouvrirFormulaire: async function (activite) {
       const elements = await S.API.get('/api/logframe?project_id=' + projet());
@@ -1006,28 +1066,169 @@
       if (!projet()) { conteneur.innerHTML = exigeProjet(); return; }
       const d = await S.API.get('/api/activities/gantt/' + projet());
       const s = d.synthese;
-      let html = '<div class="grille grille-kpi" style="margin-bottom:1rem">' +
-        S.kpi('Activités programmées', s.total, s.achevees + ' achevées') +
-        S.kpi('Avancement moyen', S.nombre(s.avancement_moyen, 1) + ' %', 'Exécution physique', '#0F9D58') +
-        S.kpi('Activités en retard', s.nb_en_retard, 'Échéance dépassée', s.nb_en_retard ? '#D93025' : '#0F9D58') +
+      const o = d.ordonnancement;
+
+      conteneur.innerHTML =
+        '<div class="grille grille-kpi" style="margin-bottom:1rem">' +
+        S.kpi('Durée du projet', S.nombre(o.duree_projet_jours, 0) + ' j',
+          S.nombre(o.duree_projet_mois, 1) + ' mois — ' + S.dateFr(o.date_debut) + ' → ' +
+          S.dateFr(o.date_fin_calculee), '#1F4E79') +
+        S.kpi('Activités critiques', o.nb_critiques,
+          S.nombre(o.part_critique, 0) + ' % des activités — marge nulle',
+          o.nb_critiques ? '#D93025' : '#0F9D58') +
+        S.kpi('Marge moyenne', S.nombre(o.marge_moyenne, 1) + ' j',
+          'Sur les activités non critiques') +
+        S.kpi('Avancement moyen', S.nombre(s.avancement_moyen, 1) + ' %',
+          s.achevees + ' / ' + s.total + ' activités achevées', '#0F9D58') +
+        S.kpi('Activités en retard', s.nb_en_retard, 'Échéance dépassée',
+          s.nb_en_retard ? '#D93025' : '#0F9D58') +
         S.kpi('Jalons', s.jalons.length, 'Points de contrôle', '#EA8600') +
-        '</div>';
+        '</div>' +
+        (o.ecart_calendrier_jours !== null && Math.abs(o.ecart_calendrier_jours) > 15 ?
+          '<div class="alerte alerte-' + (o.ecart_calendrier_jours > 0 ? 'danger' : 'info') +
+          '"><span class="type">Calendrier</span><span>La date de fin calculée par ' +
+          'l\'ordonnancement est ' + (o.ecart_calendrier_jours > 0 ? 'postérieure de ' : 'antérieure de ') +
+          Math.abs(o.ecart_calendrier_jours) + ' jours à la date de clôture planifiée (' +
+          S.dateFr(o.date_fin_planifiee) + ').</span></div>' : '') +
+        (o.avertissements || []).map((a) => '<div class="alerte alerte-warning"><span>' +
+          ech(a) + '</span></div>').join('') +
+        '<div class="onglets" id="onglets-planification">' +
+        [['gantt', '📅 Diagramme de Gantt'], ['cpm', '🔗 Chemin critique et PERT'],
+         ['wbs', '🗂️ Organigramme des tâches'], ['raci', '👥 Matrice RACI'],
+         ['liste', '📋 Liste des activités']]
+          .map(([cle, libelle]) => '<button data-onglet="' + cle + '"' +
+            (activites.onglet === cle ? ' class="actif"' : '') + '>' + libelle + '</button>').join('') +
+        '</div><div id="contenu-planification"></div>';
 
-      html += S.carte('Diagramme de Gantt', G.gantt(d.activites));
+      conteneur.querySelectorAll('#onglets-planification button').forEach(function (bouton) {
+        bouton.addEventListener('click', function () {
+          activites.onglet = bouton.dataset.onglet;
+          conteneur.querySelectorAll('#onglets-planification button').forEach(
+            (b) => b.classList.toggle('actif', b.dataset.onglet === activites.onglet));
+          activites.afficherOnglet(d);
+        });
+      });
+      await activites.afficherOnglet(d);
+    },
 
-      if (s.en_retard.length) {
-        html += S.carte('Activités en retard', s.en_retard.map((a) =>
-          '<div class="alerte alerte-warning"><span class="type">' + ech(a.code || '') + '</span>' +
-          '<span>' + ech(a.name) + ' — échéance du ' + S.dateFr(a.end_date) + ' dépassée de ' +
-          a.retard_jours + ' jours (' + S.nombre(a.progress, 0) + ' % réalisé' +
-          (a.responsible ? ', responsable : ' + ech(a.responsible) : '') + ')</span></div>').join(''));
+    afficherOnglet: async function (d) {
+      const zone = document.getElementById('contenu-planification');
+      if (!zone) return;
+      const o = d.ordonnancement;
+
+      if (activites.onglet === 'gantt') {
+        let html = S.carte('Diagramme de Gantt', G.gantt(d.activites));
+        if (d.synthese.en_retard.length) {
+          html += S.carte('Activités en retard', d.synthese.en_retard.map((a) =>
+            '<div class="alerte alerte-warning"><span class="type">' + ech(a.code || '') + '</span>' +
+            '<span>' + ech(a.name) + ' — échéance du ' + S.dateFr(a.end_date) + ' dépassée de ' +
+            a.retard_jours + ' jours (' + S.nombre(a.progress, 0) + ' % réalisé' +
+            (a.responsible ? ', responsable : ' + ech(a.responsible) : '') + ')</span></div>').join(''));
+        }
+        zone.innerHTML = html;
+        return;
       }
 
-      html += S.carte('Liste des activités', S.tableau([
+      if (activites.onglet === 'cpm') {
+        const critiques = o.activites.filter((a) => a.critique);
+        zone.innerHTML =
+          S.carte('Chemin critique',
+            (o.chemin_critique.length ?
+              '<p style="font-size:.9rem"><strong>Séquence critique :</strong> ' +
+              o.chemin_critique.map((c) => '<span class="etiquette" style="background:#D93025">' +
+                ech(c) + '</span>').join(' <span style="color:#9AA0A6">→</span> ') + '</p>' +
+              '<p style="font-size:.8rem;color:#5F6368">Tout retard sur l\'une de ces activités ' +
+              'décale d\'autant la date d\'achèvement du projet. Elles représentent ' +
+              S.nombre(o.cout_chemin_critique, 0) + ' de budget' +
+              (o.avancement_chemin_critique !== null ? ' et sont réalisées à ' +
+                S.nombre(o.avancement_chemin_critique, 1) + ' % en moyenne' : '') + '.</p>'
+              : S.vide('Aucun chemin critique identifié : renseignez les antécédents des activités.', '🔗')) +
+            S.tableau([
+              { titre: 'Code', rendu: (l) => ech(l.code || '') },
+              { cle: 'name', titre: 'Activité' },
+              { cle: 'responsable', titre: 'Responsable' },
+              { titre: 'Durée', classe: 'centre', rendu: (l) => l.duree + ' j' },
+              { titre: 'Début → fin', classe: 'centre',
+                rendu: (l) => S.dateFr(l.date_debut_tot) + ' → ' + S.dateFr(l.date_fin_tot) },
+              { titre: 'Avancement', classe: 'centre', rendu: (l) => barreProgression(l.progress) }
+            ], critiques)) +
+          S.carte('Réseau PERT (activité sur nœud)', G.pert(o.activites),
+            '', 'Les activités d\'un même rang sont indépendantes et peuvent être conduites en parallèle.') +
+          S.carte('Tableau d\'ordonnancement complet', S.tableau([
+            { titre: 'Code', rendu: (l) => (l.critique ? '🔴 ' : '') + ech(l.code || '') },
+            { cle: 'name', titre: 'Activité' },
+            { titre: 'Durée', classe: 'centre', rendu: (l) => l.duree + ' j' },
+            { titre: 'Antécédents', rendu: (l) => l.antecedents.join(', ') || '—' },
+            { titre: 'Successeurs', rendu: (l) => l.successeurs.join(', ') || '—' },
+            { titre: 'Début tôt', classe: 'centre', rendu: (l) => S.dateFr(l.date_debut_tot) },
+            { titre: 'Fin tôt', classe: 'centre', rendu: (l) => S.dateFr(l.date_fin_tot) },
+            { titre: 'Début tard', classe: 'centre', rendu: (l) => S.dateFr(l.date_debut_tard) },
+            { titre: 'Fin tard', classe: 'centre', rendu: (l) => S.dateFr(l.date_fin_tard) },
+            { titre: 'Marge totale', classe: 'centre', rendu: (l) =>
+              '<span class="etiquette" style="background:' +
+              (l.marge_totale <= 0 ? '#D93025' : l.marge_totale <= 15 ? '#F9A825' : '#0F9D58') +
+              '">' + l.marge_totale + ' j</span>' },
+            { titre: 'Marge libre', classe: 'centre', rendu: (l) => l.marge_libre + ' j' }
+          ], o.activites),
+          '', 'Marge totale : retard admissible sans décaler la fin du projet. Marge libre : retard admissible sans décaler l\'activité suivante.');
+        return;
+      }
+
+      if (activites.onglet === 'wbs') {
+        zone.innerHTML = '<div class="vide"><span class="icone">⏳</span>Construction de l\'organigramme…</div>';
+        const arbre = await S.API.get('/api/planning/wbs/' + projet());
+        zone.innerHTML =
+          '<div class="grille grille-kpi" style="margin-bottom:1rem">' +
+          S.kpi('Niveaux de décomposition', arbre.nb_niveaux, 'Profondeur de l\'organigramme') +
+          S.kpi('Lots de travail', arbre.nb_lots, 'Éléments élémentaires') +
+          S.kpi('Coût consolidé', S.nombre(arbre.cout_total, 0), 'Somme remontée des lots', '#EA8600') +
+          S.kpi('Activités non rattachées', arbre.activites_non_rattachees,
+            'Regroupées en gestion et coordination',
+            arbre.activites_non_rattachees ? '#F9A825' : '#0F9D58') +
+          '</div>' +
+          S.carte('Organigramme des tâches', G.wbs(arbre.racines, arbre.projet.code),
+            '<button class="btn btn-secondaire btn-petit" id="codifier-wbs">🔢 Inscrire les codes WBS sur les activités</button>',
+            'Décomposition du projet en composantes, sous-composantes et lots de travail.') +
+          S.carte('Décomposition détaillée', S.tableau([
+            { titre: 'Code WBS', classe: 'centre', rendu: (l) => '<strong>' + ech(l.wbs) + '</strong>' },
+            { titre: 'Nature', rendu: (l) => '<span class="etiquette pale">' + ech(l.type) + '</span>' },
+            { titre: 'Libellé', rendu: (l) => '<span style="padding-left:' +
+              (l.profondeur * 14) + 'px">' + (l.profondeur <= 1 ? '<strong>' : '') +
+              ech(l.libelle) + (l.profondeur <= 1 ? '</strong>' : '') + '</span>' },
+            { cle: 'responsable', titre: 'Responsable' },
+            { titre: 'Durée', classe: 'centre', rendu: (l) => l.duree ? l.duree + ' j' : '—' },
+            { titre: 'Coût', classe: 'nombre', rendu: (l) => S.nombre(l.cout, 0) },
+            { titre: 'Part', classe: 'centre', rendu: (l) => arbre.cout_total ?
+              S.nombre(l.cout / arbre.cout_total * 100, 1) + ' %' : '—' },
+            { titre: 'Avancement', classe: 'centre', rendu: (l) => barreProgression(l.avancement) },
+            { titre: 'Livrable', rendu: (l) => ech(l.livrable || '—') }
+          ], arbre.lignes));
+        const bouton = document.getElementById('codifier-wbs');
+        if (bouton) bouton.addEventListener('click', async function () {
+          S.basculeChargement(true);
+          try {
+            const r = await S.API.post('/api/planning/wbs/' + projet() + '/codifier', {});
+            S.notifier(r.activites_codifiees + ' activités codifiées.', 'succes');
+          } catch (e) { S.notifier(e.message, 'erreur'); }
+          finally { S.basculeChargement(false); }
+        });
+        return;
+      }
+
+      if (activites.onglet === 'raci') {
+        zone.innerHTML = '<div class="vide"><span class="icone">⏳</span>Construction de la matrice…</div>';
+        await activites.rendreRaci(zone);
+        return;
+      }
+
+      // Onglet « liste »
+      zone.innerHTML = S.carte('Liste des activités', S.tableau([
         { titre: 'Code', rendu: (l) => (l.milestone ? '◆ ' : '') + ech(l.code || '') },
         { cle: 'name', titre: 'Activité' },
         { cle: 'resultat', titre: 'Résultat rattaché' },
         { cle: 'responsible', titre: 'Responsable' },
+        { titre: 'Antécédents', rendu: (l) => ech(l.dependencies || '—') },
+        { titre: 'Durée', classe: 'centre', rendu: (l) => (l.duree_calculee || 0) + ' j' },
         { titre: 'Début', rendu: (l) => S.dateFr(l.start_date) },
         { titre: 'Fin', rendu: (l) => S.dateFr(l.end_date) },
         { titre: 'Avancement', classe: 'centre', rendu: (l) => barreProgression(l.progress) },
@@ -1037,15 +1238,136 @@
         { cle: 'modifier', libelle: '✏️' },
         { cle: 'supprimer', libelle: '🗑️', classe: 'btn-danger' }
       ]));
-
-      conteneur.innerHTML = html;
-      S.brancherActions(conteneur, {
+      S.brancherActions(zone, {
         modifier: async (id) => activites.ouvrirFormulaire(await S.API.get('/api/activities/' + id)),
         supprimer: (id) => S.confirmer('Supprimer cette activité ?', async function () {
           await S.API.supprimer('/api/activities/' + id);
           S.notifier('Activité supprimée.', 'succes');
           global.Application.rafraichir();
         })
+      });
+    },
+
+    rendreRaci: async function (zone) {
+      const m = await S.API.get('/api/planning/raci/' + projet());
+      const roles = ['', 'R', 'A', 'C', 'I'];
+
+      let matrice = '';
+      if (!m.nb_parties) {
+        matrice = S.vide('Aucune partie prenante déclarée. Commencez par recenser les acteurs du projet, puis attribuez-leur un rôle sur chaque activité.', '👥');
+      } else {
+        matrice = '<div class="tableau-conteneur"><table class="tableau" style="min-width:' +
+          (420 + m.nb_parties * 92) + 'px"><thead><tr>' +
+          '<th style="min-width:70px">Code</th><th style="min-width:250px">Activité</th>' +
+          m.parties_prenantes.map((p) => '<th class="centre" style="min-width:88px">' +
+            ech(p.nom) + '</th>').join('') +
+          '<th class="centre">Cohérence</th></tr></thead><tbody>' +
+          m.activites.map(function (a) {
+            return '<tr><td>' + ech(a.code || '') + '</td><td>' + ech(a.libelle) + '</td>' +
+              m.parties_prenantes.map(function (p) {
+                const role = a.roles[p.id] || a.roles[String(p.id)] || '';
+                return '<td class="centre"><select data-activite="' + a.id + '" data-partie="' +
+                  p.id + '" style="width:66px;padding:.2rem;border-radius:5px;border:1px solid ' +
+                  '#E4E8EE;font-weight:700;text-align:center;background:' +
+                  (role ? m.couleurs[role] : '#fff') + ';color:' + (role ? '#fff' : '#1F2933') + '">' +
+                  roles.map((r) => '<option value="' + r + '"' + (r === role ? ' selected' : '') +
+                    '>' + (r || '—') + '</option>').join('') + '</select></td>';
+              }).join('') +
+              '<td class="centre">' + (a.conforme ?
+                '<span style="color:#0F9D58;font-weight:700">✔</span>' :
+                '<span class="etiquette" style="background:#EA8600">' +
+                (a.nb_a === 0 ? 'sans A' : a.nb_a > 1 ? a.nb_a + ' A' : 'sans R') + '</span>') +
+              '</td></tr>';
+          }).join('') + '</tbody></table></div>' +
+          '<div class="legende" style="margin-top:.7rem">' +
+          Object.keys(m.roles).map((r) => '<span><i style="background:' + m.couleurs[r] +
+            '"></i><strong>' + r + '</strong> — ' + ech(m.roles[r].description) + '</span>').join('') +
+          '</div>';
+      }
+
+      zone.innerHTML =
+        '<div class="grille grille-kpi" style="margin-bottom:1rem">' +
+        S.kpi('Parties prenantes', m.nb_parties, 'Acteurs recensés') +
+        S.kpi('Couverture des activités', S.nombre(m.taux_couverture, 0) + ' %',
+          'Activités dotées d\'au moins un rôle',
+          m.taux_couverture >= 90 ? '#0F9D58' : '#EA8600') +
+        S.kpi('Conformité RACI', S.nombre(m.taux_conformite, 0) + ' %',
+          m.activites_conformes + ' / ' + m.nb_activites + ' activités conformes',
+          m.taux_conformite >= 90 ? '#0F9D58' : m.taux_conformite >= 60 ? '#F9A825' : '#D93025') +
+        S.kpi('Anomalies', m.anomalies.length, 'À corriger',
+          m.anomalies.length ? '#D93025' : '#0F9D58') +
+        '</div>' +
+        S.carte('Matrice des responsabilités', matrice,
+          '<button class="btn btn-primaire btn-petit" id="ajouter-partie">➕ Partie prenante</button>',
+          'Un seul approbateur (A) par activité, au moins un réalisateur (R). Modifiez directement les cellules.') +
+        (m.anomalies.length ? S.carte('Contrôle de cohérence (' + m.anomalies.length + ')',
+          m.anomalies.map((a) => '<div class="alerte alerte-' + a.gravite +
+            '"><span class="type">' + ech(a.activite) + '</span><span>' +
+            ech(a.libelle) + ' — ' + ech(a.anomalie) + '</span></div>').join('')) : '') +
+        (m.nb_parties ? S.carte('Charge par partie prenante', S.tableau([
+          { cle: 'code', titre: 'Code' },
+          { cle: 'nom', titre: 'Partie prenante' },
+          { cle: 'organisation', titre: 'Organisation' },
+          { cle: 'categorie', titre: 'Catégorie', classe: 'centre' },
+          { titre: 'R', classe: 'centre', rendu: (l) => l.R },
+          { titre: 'A', classe: 'centre', rendu: (l) => '<strong>' + l.A + '</strong>' },
+          { titre: 'C', classe: 'centre', rendu: (l) => l.C },
+          { titre: 'I', classe: 'centre', rendu: (l) => l.I },
+          { titre: 'Total', classe: 'centre', rendu: (l) => l.total },
+          { titre: 'Couverture', classe: 'centre', rendu: (l) => S.nombre(l.taux_couverture, 0) + ' %' }
+        ], m.parties_prenantes, [
+          { cle: 'modifier-pp', libelle: '✏️' },
+          { cle: 'supprimer-pp', libelle: '🗑️', classe: 'btn-danger' }
+        ])) : '');
+
+      document.getElementById('ajouter-partie').addEventListener('click',
+        () => activites.formulairePartiePrenante(null));
+
+      zone.querySelectorAll('select[data-activite]').forEach(function (select) {
+        select.addEventListener('change', async function () {
+          select.style.background = select.value ? m.couleurs[select.value] : '#fff';
+          select.style.color = select.value ? '#fff' : '#1F2933';
+          try {
+            await S.API.post('/api/planning/raci/' + projet() + '/cellule', {
+              activity_id: parseInt(select.dataset.activite, 10),
+              stakeholder_id: parseInt(select.dataset.partie, 10),
+              role: select.value
+            });
+            await activites.rendreRaci(zone);
+          } catch (erreur) {
+            S.notifier(erreur.message, 'erreur');
+          }
+        });
+      });
+
+      S.brancherActions(zone, {
+        'modifier-pp': async (id) => activites.formulairePartiePrenante(
+          await S.API.get('/api/stakeholders/' + id)),
+        'supprimer-pp': (id) => S.confirmer(
+          'Supprimer cette partie prenante et toutes ses affectations RACI ?', async function () {
+            await S.API.supprimer('/api/stakeholders/' + id);
+            S.notifier('Partie prenante supprimée.', 'succes');
+            await activites.rendreRaci(zone);
+          })
+      });
+    },
+
+    formulairePartiePrenante: function (partie) {
+      S.formulaireModal(partie ? 'Modifier la partie prenante' : 'Nouvelle partie prenante', [
+        { nom: 'code', libelle: 'Code', largeur: 'courte' },
+        { nom: 'category', libelle: 'Catégorie', type: 'select', largeur: 'courte',
+          options: ['Interne', 'Tutelle', 'Partenaire d\'exécution', 'Prestataire',
+                    'Bailleur', 'Bénéficiaire', 'Collectivité'] },
+        { nom: 'name', libelle: 'Fonction ou structure', obligatoire: true },
+        { nom: 'organisation', libelle: 'Organisation de rattachement' },
+        { nom: 'contact', libelle: 'Contact', largeur: 'courte' },
+        { nom: 'order_index', libelle: 'Ordre d\'affichage', type: 'number', largeur: 'courte' }
+      ], partie || { category: 'Interne' }, async function (donnees) {
+        donnees.project_id = projet();
+        if (partie) await S.API.put('/api/stakeholders/' + partie.id, donnees);
+        else await S.API.post('/api/stakeholders', donnees);
+        S.notifier('Partie prenante enregistrée.', 'succes');
+        await activites.rendreRaci(document.getElementById('contenu-planification'));
       });
     }
   };

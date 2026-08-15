@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from ..config import LIBELLES_NIVEAUX
 from ..models import (Activity, Assumption, BudgetLine, Form, FormQuestion, Indicator,
                       LogframeElement, Project, Risk, Zone)
-from . import analytics
+from . import analytics, planning
 
 BLEU = "#1F4E79"
 BLEU_CLAIR = "#DCE6F1"
@@ -1164,7 +1164,308 @@ def qualite_smart_xlsx(db: Session, project: Project) -> BytesIO:
 
 
 # ---------------------------------------------------------------------------
-# 12. Modèle d'import
+# 12. Ordonnancement : chemin critique et réseau PERT
+# ---------------------------------------------------------------------------
+def chemin_critique_xlsx(db: Session, project: Project) -> BytesIO:
+    """Tableau d'ordonnancement CPM : dates au plus tôt et au plus tard, marges, criticité."""
+    ordonnancement = planning.chemin_critique(db, project.id)
+    buffer = BytesIO()
+    wb = xlsxwriter.Workbook(buffer, {"in_memory": True})
+    fmt = _formats(wb)
+    critique_format = wb.add_format({"border": 1, "bg_color": "#FCE8E6", "valign": "top",
+                                     "text_wrap": True})
+    critique_centre = wb.add_format({"border": 1, "bg_color": "#FCE8E6", "align": "center"})
+
+    ws = wb.add_worksheet("Chemin critique")
+    ws.set_landscape()
+    ws.set_paper(8)
+    ligne = _entete_feuille(ws, fmt, project,
+                            "ORDONNANCEMENT DU PROJET — MÉTHODE DU CHEMIN CRITIQUE (CPM)")
+    ws.set_column(0, 0, 30)
+    synthese = [
+        ("Durée totale du projet (jours)", ordonnancement["duree_projet_jours"]),
+        ("Durée totale du projet (mois)", ordonnancement["duree_projet_mois"]),
+        ("Date de début retenue", ordonnancement["date_debut"]),
+        ("Date de fin calculée", ordonnancement["date_fin_calculee"]),
+        ("Date de fin planifiée", ordonnancement["date_fin_planifiee"] or "—"),
+        ("Écart au calendrier (jours)", ordonnancement["ecart_calendrier_jours"]
+         if ordonnancement["ecart_calendrier_jours"] is not None else "—"),
+        ("Activités au total", ordonnancement["nb_activites"]),
+        ("Activités critiques (marge nulle)", ordonnancement["nb_critiques"]),
+        ("Part des activités critiques (%)", ordonnancement["part_critique"]),
+        ("Marge moyenne des activités non critiques (jours)", ordonnancement["marge_moyenne"]),
+        (f"Coût du chemin critique ({project.currency})",
+         ordonnancement["cout_chemin_critique"]),
+        ("Avancement moyen du chemin critique (%)",
+         ordonnancement["avancement_chemin_critique"]
+         if ordonnancement["avancement_chemin_critique"] is not None else "—"),
+    ]
+    for libelle, valeur in synthese:
+        ws.write(ligne, 0, libelle, fmt["gras"])
+        ws.write(ligne, 1, valeur, fmt["cellule_c"])
+        ligne += 1
+    ws.write(ligne, 0, "Chemin critique", fmt["gras"])
+    ws.write(ligne, 1, " → ".join(ordonnancement["chemin_critique"]) or "—", fmt["cellule"])
+    ligne += 2
+
+    entetes = ["Code", "Activité", "Responsable", "Durée (j)", "Antécédents",
+               "Début au plus tôt", "Fin au plus tôt", "Début au plus tard", "Fin au plus tard",
+               "Marge totale (j)", "Marge libre (j)", "Critique", "Avancement (%)", "Statut"]
+    largeurs = [10, 44, 20, 10, 20, 16, 16, 16, 16, 13, 13, 11, 13, 14]
+    for col, (titre, largeur) in enumerate(zip(entetes, largeurs)):
+        ws.write(ligne, col, titre, fmt["entete"])
+        ws.set_column(col, col, largeur)
+    ws.set_row(ligne, 32)
+    ligne += 1
+    premiere = ligne
+    for a in ordonnancement["activites"]:
+        style = critique_format if a["critique"] else fmt["cellule"]
+        style_c = critique_centre if a["critique"] else fmt["cellule_c"]
+        valeurs = [a["code"] or "", a["name"], a["responsable"] or "", a["duree"],
+                   ", ".join(a["antecedents"]) or "—", a["date_debut_tot"], a["date_fin_tot"],
+                   a["date_debut_tard"], a["date_fin_tard"], a["marge_totale"], a["marge_libre"],
+                   "OUI" if a["critique"] else "", a["progress"], a["status"] or ""]
+        for col, valeur in enumerate(valeurs):
+            ws.write(ligne, col, valeur, style_c if col in (3, 5, 6, 7, 8, 9, 10, 11, 12) else style)
+        ligne += 1
+    if ordonnancement["activites"]:
+        ws.autofilter(premiere - 1, 0, ligne - 1, len(entetes) - 1)
+        ws.conditional_format(premiere, 9, ligne - 1, 9, {
+            "type": "cell", "criteria": "<=", "value": 0,
+            "format": wb.add_format({"bg_color": "#D93025", "font_color": "white", "bold": True})})
+
+    # Réseau PERT présenté par rang d'ordonnancement
+    ws2 = wb.add_worksheet("Réseau PERT")
+    l2 = _entete_feuille(ws2, fmt, project, "RÉSEAU PERT — ACTIVITÉS PAR RANG D'ORDONNANCEMENT")
+    for col, (titre, largeur) in enumerate(zip(
+            ["Rang", "Code", "Activité", "Durée (j)", "Antécédents", "Successeurs",
+             "Marge totale (j)", "Sur le chemin critique"],
+            [8, 10, 46, 10, 22, 22, 15, 20])):
+        ws2.write(l2, col, titre, fmt["entete"])
+        ws2.set_column(col, col, largeur)
+    l2 += 1
+    for a in sorted(ordonnancement["activites"], key=lambda x: (x["niveau_pert"], x["code"] or "")):
+        style = critique_format if a["critique"] else fmt["cellule"]
+        valeurs = [a["niveau_pert"] + 1, a["code"] or "", a["name"], a["duree"],
+                   ", ".join(a["antecedents"]) or "—", ", ".join(a["successeurs"]) or "—",
+                   a["marge_totale"], "OUI" if a["critique"] else ""]
+        for col, valeur in enumerate(valeurs):
+            ws2.write(l2, col, valeur, style)
+        l2 += 1
+    l2 += 1
+    ws2.write(l2, 0, "Lecture : le rang correspond à la position de l'activité dans le réseau. "
+                     "Les activités d'un même rang peuvent être conduites en parallèle.",
+              fmt["wrap"])
+    if ordonnancement["avertissements"]:
+        l2 += 2
+        ws2.write(l2, 0, "Avertissements d'ordonnancement", fmt["entete"])
+        for avertissement in ordonnancement["avertissements"]:
+            l2 += 1
+            ws2.write(l2, 0, avertissement, fmt["cellule"])
+    wb.close()
+    buffer.seek(0)
+    return buffer
+
+
+# ---------------------------------------------------------------------------
+# 13. Organigramme des tâches (WBS)
+# ---------------------------------------------------------------------------
+def wbs_xlsx(db: Session, project: Project) -> BytesIO:
+    arbre = planning.organigramme_taches(db, project.id)
+    buffer = BytesIO()
+    wb = xlsxwriter.Workbook(buffer, {"in_memory": True})
+    fmt = _formats(wb)
+    couleurs_niveau = ["#1F4E79", "#2E75B6", "#5B9BD5", "#9DC3E6", "#DCE6F1"]
+
+    ws = wb.add_worksheet("Organigramme des tâches")
+    ws.set_landscape()
+    ws.set_paper(8)
+    ligne = _entete_feuille(ws, fmt, project,
+                            "ORGANIGRAMME DES TÂCHES (Work Breakdown Structure)")
+    ws.write(ligne, 0, "Niveaux de décomposition", fmt["gras"])
+    ws.write(ligne, 1, arbre["nb_niveaux"], fmt["cellule_c"])
+    ws.write(ligne + 1, 0, "Lots de travail élémentaires", fmt["gras"])
+    ws.write(ligne + 1, 1, arbre["nb_lots"], fmt["cellule_c"])
+    ws.write(ligne + 2, 0, f"Coût total consolidé ({project.currency})", fmt["gras"])
+    ws.write(ligne + 2, 1, arbre["cout_total"], fmt["nombre"])
+    ligne += 4
+
+    entetes = ["Code WBS", "Niveau", "Nature", "Libellé", "Responsable", "Durée (j)",
+               f"Coût ({project.currency})", "Part du budget (%)", "Avancement (%)",
+               "Début", "Fin", "Livrable"]
+    largeurs = [12, 8, 18, 58, 22, 10, 16, 14, 13, 12, 12, 34]
+    for col, (titre, largeur) in enumerate(zip(entetes, largeurs)):
+        ws.write(ligne, col, titre, fmt["entete"])
+        ws.set_column(col, col, largeur)
+    ws.set_row(ligne, 32)
+    ligne += 1
+    premiere = ligne
+    total = arbre["cout_total"] or 1
+    for noeud in arbre["lignes"]:
+        couleur = couleurs_niveau[min(noeud["profondeur"], len(couleurs_niveau) - 1)]
+        style_code = wb.add_format({"border": 1, "bg_color": couleur, "bold": True,
+                                    "font_color": "white" if noeud["profondeur"] < 3 else "#1F2933",
+                                    "align": "center"})
+        indentation = "    " * noeud["profondeur"]
+        ws.write(ligne, 0, noeud["wbs"], style_code)
+        ws.write(ligne, 1, noeud["profondeur"] + 1, fmt["cellule_c"])
+        ws.write(ligne, 2, noeud["type"], fmt["cellule"])
+        ws.write(ligne, 3, indentation + (noeud["libelle"] or ""),
+                 wb.add_format({"border": 1, "text_wrap": True, "valign": "top",
+                                "bold": noeud["profondeur"] <= 1}))
+        ws.write(ligne, 4, noeud["responsable"] or "", fmt["cellule"])
+        ws.write(ligne, 5, noeud["duree"] or "", fmt["cellule_c"])
+        ws.write(ligne, 6, noeud["cout"] or 0, fmt["nombre"])
+        ws.write(ligne, 7, round((noeud["cout"] or 0) / total * 100, 1), fmt["cellule_c"])
+        ws.write(ligne, 8, noeud["avancement"] or 0, fmt["cellule_c"])
+        ws.write(ligne, 9, noeud["date_debut"] or "", fmt["cellule_c"])
+        ws.write(ligne, 10, noeud["date_fin"] or "", fmt["cellule_c"])
+        ws.write(ligne, 11, noeud["livrable"] or "", fmt["cellule"])
+        ligne += 1
+    if arbre["lignes"]:
+        ws.autofilter(premiere - 1, 0, ligne - 1, len(entetes) - 1)
+
+    # Dictionnaire des lots de travail
+    ws2 = wb.add_worksheet("Dictionnaire des lots")
+    l2 = _entete_feuille(ws2, fmt, project, "DICTIONNAIRE DES LOTS DE TRAVAIL")
+    for col, (titre, largeur) in enumerate(zip(
+            ["Code WBS", "Code activité", "Lot de travail", "Livrable attendu", "Responsable",
+             "Durée (j)", f"Coût ({project.currency})", "Début", "Fin", "Jalon"],
+            [12, 12, 48, 40, 22, 10, 16, 12, 12, 8])):
+        ws2.write(l2, col, titre, fmt["entete"])
+        ws2.set_column(col, col, largeur)
+    l2 += 1
+    for noeud in arbre["lignes"]:
+        if noeud["type"] != "Lot de travail":
+            continue
+        valeurs = [noeud["wbs"], noeud["code"] or "", noeud["libelle"], noeud["livrable"] or "—",
+                   noeud["responsable"] or "", noeud["duree"], noeud["cout"],
+                   noeud["date_debut"] or "", noeud["date_fin"] or "",
+                   "★" if noeud["jalon"] else ""]
+        for col, valeur in enumerate(valeurs):
+            ws2.write(l2, col, valeur, fmt["nombre"] if col == 6 else fmt["cellule"])
+        l2 += 1
+    wb.close()
+    buffer.seek(0)
+    return buffer
+
+
+# ---------------------------------------------------------------------------
+# 14. Matrice RACI
+# ---------------------------------------------------------------------------
+def raci_xlsx(db: Session, project: Project) -> BytesIO:
+    matrice = planning.matrice_raci(db, project.id)
+    buffer = BytesIO()
+    wb = xlsxwriter.Workbook(buffer, {"in_memory": True})
+    fmt = _formats(wb)
+    styles_role = {
+        role: wb.add_format({"border": 1, "align": "center", "valign": "vcenter", "bold": True,
+                             "font_color": "white", "bg_color": couleur})
+        for role, couleur in planning.COULEURS_RACI.items()
+    }
+
+    ws = wb.add_worksheet("Matrice RACI")
+    ws.set_landscape()
+    ws.set_paper(8)
+    ligne = _entete_feuille(ws, fmt, project,
+                            "MATRICE DES RESPONSABILITÉS (RACI)")
+    entete_vertical = wb.add_format({"bold": True, "bg_color": BLEU, "font_color": "white",
+                                     "border": 1, "align": "center", "valign": "bottom",
+                                     "rotation": 90, "text_wrap": True})
+    ws.write(ligne, 0, "Code", fmt["entete"])
+    ws.write(ligne, 1, "Activité", fmt["entete"])
+    ws.set_column(0, 0, 10)
+    ws.set_column(1, 1, 52)
+    for index, partie in enumerate(matrice["parties_prenantes"]):
+        ws.write(ligne, 2 + index, partie["nom"], entete_vertical)
+        ws.set_column(2 + index, 2 + index, 6)
+    colonne_conformite = 2 + len(matrice["parties_prenantes"])
+    ws.write(ligne, colonne_conformite, "Conformité", fmt["entete"])
+    ws.set_column(colonne_conformite, colonne_conformite, 14)
+    ws.set_row(ligne, 130)
+    ligne += 1
+
+    for activite in matrice["activites"]:
+        ws.write(ligne, 0, activite["code"] or "", fmt["cellule_c"])
+        ws.write(ligne, 1, activite["libelle"], fmt["cellule"])
+        for index, partie in enumerate(matrice["parties_prenantes"]):
+            role = activite["roles"].get(partie["id"]) or activite["roles"].get(str(partie["id"]))
+            if role:
+                ws.write(ligne, 2 + index, role, styles_role.get(role, fmt["cellule_c"]))
+            else:
+                ws.write_blank(ligne, 2 + index, None, fmt["cellule_c"])
+        ws.write(ligne, colonne_conformite, "Conforme" if activite["conforme"] else "À corriger",
+                 wb.add_format({"border": 1, "align": "center", "bold": True, "font_color": "white",
+                                "bg_color": "#0F9D58" if activite["conforme"] else "#EA8600"}))
+        ligne += 1
+
+    ligne += 1
+    ws.write(ligne, 1, "Légende", fmt["gras"])
+    for index, (role, description) in enumerate(planning.ROLES_RACI.items()):
+        ws.write(ligne + 1 + index, 1, f"{role} — {description['libelle']} : "
+                                       f"{description['description']}", fmt["wrap"])
+        ws.write(ligne + 1 + index, 0, role, styles_role[role])
+
+    # Charge par partie prenante
+    ws2 = wb.add_worksheet("Charge par acteur")
+    l2 = _entete_feuille(ws2, fmt, project, "RÉPARTITION DE LA CHARGE PAR PARTIE PRENANTE")
+    for col, (titre, largeur) in enumerate(zip(
+            ["Code", "Partie prenante", "Organisation", "Catégorie", "R (réalise)",
+             "A (approuve)", "C (consulté)", "I (informé)", "Total", "Couverture (%)"],
+            [10, 34, 28, 18, 13, 14, 14, 13, 10, 15])):
+        ws2.write(l2, col, titre, fmt["entete"])
+        ws2.set_column(col, col, largeur)
+    l2 += 1
+    depart = l2
+    for partie in matrice["parties_prenantes"]:
+        valeurs = [partie["code"] or "", partie["nom"], partie["organisation"] or "",
+                   partie["categorie"] or "", partie["R"], partie["A"], partie["C"], partie["I"],
+                   partie["total"], partie["taux_couverture"]]
+        for col, valeur in enumerate(valeurs):
+            ws2.write(l2, col, valeur, fmt["cellule_c"] if col >= 4 else fmt["cellule"])
+        l2 += 1
+    if matrice["parties_prenantes"]:
+        graphique = wb.add_chart({"type": "column", "subtype": "stacked"})
+        for index, (role, colonne) in enumerate(zip(["R", "A", "C", "I"], [4, 5, 6, 7])):
+            graphique.add_series({
+                "name": role,
+                "categories": ["Charge par acteur", depart, 1, l2 - 1, 1],
+                "values": ["Charge par acteur", depart, colonne, l2 - 1, colonne],
+                "fill": {"color": planning.COULEURS_RACI[role]}})
+        graphique.set_title({"name": "Charge RACI par partie prenante"})
+        graphique.set_size({"width": 800, "height": 380})
+        ws2.insert_chart(l2 + 2, 0, graphique)
+
+    # Anomalies
+    ws3 = wb.add_worksheet("Contrôle de cohérence")
+    l3 = _entete_feuille(ws3, fmt, project, "CONTRÔLE DE COHÉRENCE DE LA MATRICE RACI")
+    ws3.write(l3, 0, "Taux de conformité (%)", fmt["gras"])
+    ws3.write(l3, 1, matrice["taux_conformite"], fmt["cellule_c"])
+    ws3.write(l3 + 1, 0, "Taux de couverture des activités (%)", fmt["gras"])
+    ws3.write(l3 + 1, 1, matrice["taux_couverture"], fmt["cellule_c"])
+    ws3.set_column(0, 0, 34)
+    ws3.set_column(1, 1, 46)
+    ws3.set_column(2, 2, 62)
+    l3 += 3
+    for col, titre in enumerate(["Gravité", "Activité concernée", "Anomalie constatée"]):
+        ws3.write(l3, col, titre, fmt["entete"])
+    l3 += 1
+    for anomalie in matrice["anomalies"]:
+        ws3.write(l3, 0, anomalie["gravite"].upper(), wb.add_format(
+            {"border": 1, "align": "center", "bold": True, "font_color": "white",
+             "bg_color": "#D93025" if anomalie["gravite"] == "danger" else "#F9A825"}))
+        ws3.write(l3, 1, f"{anomalie['activite']} — {anomalie['libelle']}"[:80], fmt["cellule"])
+        ws3.write(l3, 2, anomalie["anomalie"], fmt["cellule"])
+        l3 += 1
+    if not matrice["anomalies"]:
+        ws3.write(l3, 0, "Aucune anomalie : la matrice est cohérente.", fmt["cellule"])
+    wb.close()
+    buffer.seek(0)
+    return buffer
+
+
+# ---------------------------------------------------------------------------
+# 15. Modèle d'import
 # ---------------------------------------------------------------------------
 def modele_import_xlsx() -> BytesIO:
     """Classeur type à remplir puis à réimporter dans SEPIA."""
