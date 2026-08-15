@@ -1005,26 +1005,34 @@ def zones_xlsx(db: Session, project: Project, periode: str = None) -> BytesIO:
                             "CONSOLIDATION DES DONNÉES PAR ZONE D'INTERVENTION")
     entetes = ["Code", "Zone", "Niveau", "Responsable", "Population", "Cible bénéficiaires",
                "Bénéficiaires atteints", "Taux de couverture (%)", "Part des femmes (%)",
-               "Nombre de mesures"]
-    for col, (titre, largeur) in enumerate(zip(entetes, [10, 26, 14, 20, 14, 16, 18, 16, 16, 14])):
+               "Nombre de mesures", "Latitude", "Longitude"]
+    for col, (titre, largeur) in enumerate(zip(entetes,
+                                               [10, 26, 14, 20, 14, 16, 18, 16, 16, 14, 12, 12])):
         ws.write(ligne, col, titre, fmt["entete"])
         ws.set_column(col, col, largeur)
     ws.set_row(ligne, 32)
     ligne += 1
     depart = ligne
+    coordonnees = wb.add_format({"border": 1, "align": "center", "num_format": "0.0000"})
     for zone in consolidation["zones"]:
         equite = zone.get("equite_genre") or {}
         valeurs = [zone["code"] or "", zone["nom"], zone["niveau"], zone["responsable"] or "",
                    zone["population"], zone["cible_beneficiaires"], zone["beneficiaires_atteints"],
-                   zone["taux_couverture"], equite.get("part_femmes"), zone["nb_mesures"]]
+                   zone["taux_couverture"], equite.get("part_femmes"), zone["nb_mesures"],
+                   zone.get("latitude"), zone.get("longitude")]
         for col, valeur in enumerate(valeurs):
             if col in (4, 5, 6):
                 ws.write(ligne, col, valeur if valeur is not None else "", fmt["nombre"])
+            elif col in (10, 11):
+                ws.write(ligne, col, valeur if valeur is not None else "", coordonnees)
             elif col in (7, 8, 9):
                 ws.write(ligne, col, valeur if valeur is not None else "", fmt["cellule_c"])
             else:
                 ws.write(ligne, col, valeur, fmt["cellule"])
         ligne += 1
+    ligne += 1
+    ws.write(ligne, 0, "Les colonnes Latitude et Longitude permettent de cartographier ces zones "
+                       "dans Power BI (visuel Carte), QGIS ou tout SIG.", fmt["wrap"])
     if consolidation["zones"]:
         ws.autofilter(depart - 1, 0, ligne - 1, len(entetes) - 1)
         ws.conditional_format(depart, 7, ligne - 1, 7, {

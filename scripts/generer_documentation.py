@@ -338,7 +338,8 @@ def construire(chemin_sortie: str) -> str:
                                               "d'agrégation, désagrégations exigées"],
              ["Planification", "Zones d'intervention", "Découpage géographique hiérarchisé, "
                                                        "population, cible de bénéficiaires, "
-                                                       "coordonnées, responsable"],
+                                                       "coordonnées, responsable, et carte de "
+                                                       "couverture à symboles proportionnels"],
              ["Planification", "Chronogramme et ordonnancement",
               "Gantt, chemin critique et durée du projet, réseau PERT, organigramme des tâches "
               "(WBS), matrice des responsabilités (RACI)"],
@@ -401,11 +402,13 @@ def construire(chemin_sortie: str) -> str:
     encadre(document, "Choix structurant",
             "L'interface ne dépend d'aucune bibliothèque JavaScript externe et d'aucun CDN. Les "
             "graphiques — anneaux, barres, courbes, jauges, diagramme de Gantt, matrice des "
-            "risques — sont produits en SVG par un module interne de 400 lignes. Il n'existe donc "
-            "aucune étape de compilation : le déploiement se réduit à l'installation des "
-            "dépendances Python. Ce choix supprime une classe entière de pannes (rupture de CDN, "
-            "incompatibilité de version, vulnérabilité d'une dépendance transitive) et garantit "
-            "le fonctionnement de l'application sur un réseau contraint.")
+            "risques, réseau PERT, organigramme des tâches et carte de couverture — sont produits "
+            "en SVG par un module interne. Il n'existe donc aucune étape de compilation : le "
+            "déploiement se réduit à l'installation des dépendances Python. Ce choix supprime une "
+            "classe entière de pannes (rupture de CDN, incompatibilité de version, vulnérabilité "
+            "d'une dépendance transitive) et garantit le fonctionnement de l'application sur un "
+            "réseau contraint. Le fond de carte OpenStreetMap constitue la seule ressource "
+            "externe, facultative et désactivée automatiquement si elle est inaccessible.")
 
     titre2(document, "3.2 Organisation du code applicatif")
     tableau(document, ["Composant", "Responsabilité"],
@@ -663,11 +666,22 @@ def construire(chemin_sortie: str) -> str:
           "liste des modalités du référentiel qui n'ont pas été renseignées.",
           "L'écart à la parité est exprimé en points ; la parité est considérée atteinte en deçà "
           "de cinq points d'écart."]),
-        ("5.12 Zones d'intervention",
+        ("5.12 Zones d'intervention et carte de couverture",
          "Gestion du découpage géographique et consolidation territoriale. Chaque zone porte son "
          "niveau administratif, sa zone parente, sa population, sa cible de bénéficiaires, ses "
-         "coordonnées et son responsable.",
-         ["Le taux de couverture rapporte les bénéficiaires atteints à la cible de la zone : il "
+         "coordonnées et son responsable. Une carte de couverture restitue visuellement "
+         "l'implantation du projet.",
+         ["La carte est à symboles proportionnels : la surface de chaque cercle — et non son "
+          "rayon — représente les bénéficiaires atteints, sa couleur le taux de couverture de la "
+          "cible de la zone, et un demi-disque la part des femmes. Des liens en pointillé relient "
+          "chaque zone à sa zone mère.",
+          "La projection est celle de Mercator sphérique (EPSG:3857). Le rendu comprend un "
+          "graticule gradué en degrés, une échelle métrique et une rose des vents ; il est produit "
+          "en SVG, sans bibliothèque cartographique.",
+          "Un fond de carte OpenStreetMap peut être superposé par une simple case à cocher. C'est "
+          "le seul appel réseau externe de la plateforme ; s'il échoue, il est automatiquement "
+          "désactivé et la carte demeure exploitable.",
+          "Le taux de couverture rapporte les bénéficiaires atteints à la cible de la zone : il "
           "révèle les déséquilibres géographiques que les totaux nationaux masquent.",
           "La part des femmes est calculée zone par zone, ce qui permet d'identifier les "
           "territoires où l'inclusion des femmes est en retrait.",
@@ -1095,8 +1109,8 @@ def construire(chemin_sortie: str) -> str:
               "Ventilation par catégorie, indice d'équité de genre, détail indicateur × modalité, "
               "graphique de répartition par sexe"],
              ["Consolidation par zone d'intervention", "Excel",
-              "Bénéficiaires et indicateurs par zone, taux de couverture, collecte par activité, "
-              "graphique atteints/cible"],
+              "Bénéficiaires et indicateurs par zone, taux de couverture, coordonnées "
+              "cartographiables dans Power BI ou un SIG, collecte par activité"],
              ["Revue qualité SMART", "Excel",
               "Diagnostic critère par critère, score du système, actions correctrices"],
              ["Tableau de bord", "Excel", "Indicateurs clés, graphiques natifs Excel, feuille "
@@ -1248,7 +1262,16 @@ def construire(chemin_sortie: str) -> str:
          "Power BI » fournit le même modèle sous forme de fichier, accompagné d'une notice "
          "détaillant les relations à créer et les mesures DAX recommandées.")
 
-    titre2(document, "10.4 Modèle en étoile exposé")
+    titre2(document, "10.4 Cartographie")
+    para(document,
+         "La plateforme intègre une carte de couverture des zones d'intervention, décrite au "
+         "chapitre 5.12. Pour une analyse cartographique plus poussée, les coordonnées de chaque "
+         "zone sont exportées dans le classeur « Consolidation par zone » et exposées dans la "
+         "table Dim_Zone du flux Power BI : le visuel Carte de Power BI, comme un système "
+         "d'information géographique tel que QGIS, peut les exploiter directement, en les croisant "
+         "avec les bénéficiaires atteints ou le taux de couverture.")
+
+    titre2(document, "10.5 Modèle en étoile exposé")
     tableau(document, ["Table", "Nature", "Contenu"],
             [["Dim_Projet", "Dimension", "Identification et caractéristiques du projet"],
              ["Dim_Resultat", "Dimension", "Chaîne de résultats hiérarchisée"],
@@ -1271,7 +1294,7 @@ def construire(chemin_sortie: str) -> str:
          "préalable. Les coordonnées portées par Dim_Zone permettent un visuel cartographique "
          "immédiat.")
 
-    titre2(document, "10.5 Mesures DAX recommandées")
+    titre2(document, "10.6 Mesures DAX recommandées")
     code(document, [
         "Taux de réalisation =",
         "    DIVIDE(SUM(Fait_Realisation[ValeurRealisee]), SUM(Fait_Cible[ValeurCible]))",
@@ -1362,8 +1385,10 @@ def construire(chemin_sortie: str) -> str:
         ("Déclarer les zones d'intervention",
          "Vue Zones d'intervention. Saisir le découpage géographique du projet, du niveau le plus "
          "large vers le plus fin, en renseignant pour chaque zone sa population, sa cible de "
-         "bénéficiaires et son responsable. Cette étape conditionne la consolidation territoriale "
-         "et le calcul des taux de couverture ; elle doit précéder la saisie des réalisations."),
+         "bénéficiaires, son responsable et ses coordonnées géographiques — ces dernières "
+         "conditionnent l'affichage de la carte de couverture. Cette étape commande la "
+         "consolidation territoriale et le calcul des taux de couverture ; elle doit précéder la "
+         "saisie des réalisations."),
         ("Paramétrer les indicateurs",
          "Pour chaque indicateur, compléter la fiche métadonnée : définition opérationnelle, "
          "unité, mode de calcul, désagrégations exigées (au minimum le sexe), valeur de référence "
@@ -1603,6 +1628,10 @@ def construire(chemin_sortie: str) -> str:
                                     "cible fixée pour cette zone"],
              ["Zone d'intervention", "Unité géographique de mise en œuvre et de consolidation des "
                                      "données, organisée en hiérarchie administrative"],
+             ["Carte à symboles proportionnels", "Carte où la surface du symbole représente une "
+                                                 "quantité et sa couleur une intensité relative"],
+             ["Graticule", "Réseau des lignes de latitude et de longitude servant de repère "
+                           "géographique sur une carte"],
              ["Chemin critique", "Séquence continue d'activités sans marge : tout retard sur "
                                  "l'une d'elles décale la fin du projet"],
              ["Marge totale", "Retard admissible sur une activité sans décaler l'achèvement du "

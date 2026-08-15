@@ -1,12 +1,13 @@
-# SEPIA — Système d'Évaluation, de Planification, d'Indicateurs et d'Apprentissage
+# SEPIA — Planification, Suivi-évaluation et Apprentissage des projets et programmes de développement
 
-Plateforme web-mobile (ERP) de **planification et de suivi-évaluation des projets et programmes
-de développement**. À partir d'un cadre logique et d'un budget — importés depuis Excel ou Word,
-ou créés directement dans l'application — SEPIA génère automatiquement l'ensemble des instruments
-du dispositif de S&E : cadre logique paramétré, indicateurs documentés, cadre de rendement,
-cadre de suivi des indicateurs (IPTT), registre des risques et des hypothèses, chronogramme,
-PTBA, fiches de collecte et questionnaires (Word et XLSForm pour KoboToolbox/ODK), manuel de
-suivi-évaluation, tableaux de bord Excel et flux Power BI.
+Plateforme web-mobile (ERP) de **planification, de suivi-évaluation et d'apprentissage des projets
+et programmes de développement**. À partir d'un cadre logique et d'un budget — importés depuis
+Excel ou Word, ou créés directement dans l'application — SEPIA génère automatiquement l'ensemble
+des instruments du dispositif : cadre logique paramétré, indicateurs documentés, cadre de
+rendement, cadre de suivi des indicateurs (IPTT), registre des risques et des hypothèses,
+chronogramme et ordonnancement (chemin critique, PERT, WBS, RACI), PTBA, carte de couverture des
+zones d'intervention, fiches de collecte et questionnaires (Word et XLSForm pour KoboToolbox/ODK),
+manuel de suivi-évaluation, rapports périodiques, tableaux de bord Excel et flux Power BI.
 
 ---
 
@@ -18,7 +19,7 @@ suivi-évaluation, tableaux de bord Excel et flux Power BI.
 | **Portefeuille** | Vue consolidée multi-projets : indice de santé, budgets, alertes, duplication de projet |
 | **Fiche projet** | Identification, ancrage institutionnel, théorie du changement, alignement stratégique (ODD, stratégies nationales) |
 | **Cadre logique** | Arborescence Impact → Effets → Produits → Activités, sources de vérification, hypothèses, responsables |
-| **Zones d'intervention** | Découpage géographique hiérarchisé, population, cible de bénéficiaires, coordonnées, responsable de zone |
+| **Zones d'intervention** | Découpage géographique hiérarchisé, population, cible de bénéficiaires, coordonnées, responsable de zone, et **carte de couverture** à symboles proportionnels |
 | **Chronogramme et ordonnancement** | Cinq onglets : diagramme de Gantt · **chemin critique et réseau PERT** (durée du projet, dates au plus tôt et au plus tard, marges) · **organigramme des tâches (WBS)** · **matrice RACI** éditable · liste des activités |
 | **PTBA / budget** | Lignes budgétaires détaillées, ventilation trimestrielle, engagements et décaissements |
 
@@ -89,6 +90,29 @@ Désactivés, ils **restent enregistrés** — mesures et cibles comprises — m
 tableaux de bord, des analyses d'équité et de qualité, des rapports périodiques et des livrables.
 Le nombre d'indicateurs masqués reste affiché, afin que l'option ne dissimule jamais l'existence
 des données.
+
+### Carte de couverture des zones d'intervention
+
+La carte figure dans la vue **Zones d'intervention** et, en format réduit, sur le tableau de bord.
+C'est une **carte à symboles proportionnels** : la *surface* de chaque cercle — et non son rayon —
+est proportionnelle aux bénéficiaires atteints, sa *couleur* traduit le taux de couverture de la
+cible de la zone, et un demi-disque signale la part des femmes. Les liens en pointillé relient
+chaque zone à sa zone mère.
+
+La projection est celle de Mercator sphérique (EPSG:3857) et le rendu comprend un graticule
+gradué, une échelle métrique et une rose des vents — **sans aucune bibliothèque cartographique** :
+la carte est produite en SVG par `charts.js`, comme les autres graphiques.
+
+Un **fond de carte OpenStreetMap** peut être superposé, activable par une case à cocher. Il est
+chargé en simples balises `<img>` (calcul des tuiles en une vingtaine de lignes, aucune dépendance)
+et constitue le seul appel réseau externe de toute la plateforme. Si les tuiles ne répondent pas —
+réseau filtrant, absence de connexion — la plateforme le détecte au bout de six secondes, désactive
+le fond et le mémorise : la carte reste alors pleinement exploitable grâce au graticule, à
+l'échelle et aux symboles. L'attribution « © Contributeurs OpenStreetMap » est affichée
+conformément à la licence.
+
+Les colonnes latitude et longitude figurent dans l'export « Consolidation par zone », ce qui permet
+de cartographier les mêmes données dans Power BI (visuel Carte) ou dans un SIG.
 
 ### Ordonnancement : chemin critique, PERT, WBS et RACI
 
@@ -176,7 +200,8 @@ sepia-erp/
 **Choix structurants**
 
 - **Zéro dépendance front-end** : les graphiques (anneau, barres, courbes, jauge, Gantt, matrice
-  de risques, réseau PERT, organigramme WBS) sont produits en SVG par `charts.js`. Aucun CDN, aucun `npm install`, aucun bundler :
+  de risques, réseau PERT, organigramme WBS, carte de couverture) sont produits en SVG par
+  `charts.js`. Aucun CDN, aucun `npm install`, aucun bundler :
   le déploiement se réduit à `pip install -r requirements.txt`.
 - **Authentification sans dépendance** : hachage PBKDF2-SHA256 (180 000 itérations) et jetons
   signés HMAC-SHA256 issus de la bibliothèque standard — pas de `passlib`, `bcrypt` ni `python-jose`
@@ -238,7 +263,7 @@ Au premier démarrage, la base est créée et un projet de démonstration comple
 | Rapport de performance | Word | Résumé exécutif, indicateurs, alertes, mesures correctrices |
 | **Rapport trimestriel / semestriel / annuel** | Word | Rapport périodé en 8 parties : résumé exécutif, performance de la période, analyse d'équité, consolidation par zone, exécution physique et financière, difficultés et mesures correctrices, qualité du dispositif, bloc de validation |
 | **Analyse d'équité et données désagrégées** | Excel | Ventilation par catégorie, indice d'équité de genre, détail indicateur × modalité, graphique de répartition |
-| **Consolidation par zone d'intervention** | Excel | Bénéficiaires et indicateurs par zone, taux de couverture, collecte par activité, graphique atteints/cible |
+| **Consolidation par zone d'intervention** | Excel | Bénéficiaires et indicateurs par zone, taux de couverture, coordonnées cartographiables, collecte par activité |
 | **Revue qualité SMART** | Excel | Diagnostic critère par critère, score du système, actions correctrices |
 | Tableau de bord | Excel | KPI, graphiques natifs Excel, alertes, détail des indicateurs |
 | Jeu de données Power BI | Excel | Modèle en étoile + dimension géographique + faits désagrégés + notice DAX |

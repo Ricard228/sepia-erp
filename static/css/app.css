@@ -87,7 +87,11 @@ a { color: var(--bleu-clair); }
 }
 .navigation-entete {
   display: flex; align-items: center; gap: .6rem; padding: 1rem 1rem .8rem;
-  font-weight: 700; font-size: 1.15rem; letter-spacing: .6px;
+  font-weight: 700; font-size: 1.15rem; letter-spacing: .6px; flex-wrap: wrap;
+}
+.baseline-navigation {
+  flex-basis: 100%; font-size: .62rem; font-weight: 500; letter-spacing: .2px;
+  opacity: .7; line-height: 1.35; margin-top: -.15rem;
 }
 .fermer-navigation { display: none; margin-left: auto; color: #fff; }
 .selecteur-projet { padding: 0 1rem .8rem; }
@@ -267,6 +271,24 @@ table.tableau .actions { white-space: nowrap; text-align: right; }
 .grille-saisie input { width: 76px; padding: .25rem .3rem; font-size: .78rem; text-align: center; border: 1px solid var(--gris-clair); border-radius: 5px; }
 .grille-saisie input.modifie { border-color: var(--orange); background: #FFF8E1; }
 .cellule-cible { color: var(--gris); font-size: .72rem; }
+
+/* ------------------------------------------------- Carte de couverture */
+.carte-couverture { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.carte-cadre {
+  position: relative; overflow: hidden; border-radius: 10px;
+  border: 1px solid var(--gris-clair); background: #EAF0F6;
+}
+.carte-cadre img { pointer-events: none; user-select: none; }
+.attribution-carte {
+  position: absolute; right: 0; bottom: 0; font-size: .62rem; color: #1F2933;
+  background: rgba(255, 255, 255, .78); padding: .1rem .35rem; border-radius: 4px 0 0 0;
+}
+.avis-fond-carte {
+  position: absolute; left: 50%; top: 8px; transform: translateX(-50%);
+  font-size: .7rem; color: #EA8600; background: rgba(255, 255, 255, .92);
+  padding: .25rem .6rem; border-radius: 6px; border: 1px solid #F9A825;
+  max-width: 92%; text-align: center;
+}
 
 /* ---------------------------------------------------------------- Graphiques */
 .graphique { width: 100%; overflow-x: auto; }

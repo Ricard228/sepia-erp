@@ -531,9 +531,254 @@
       'chaque bloc est le coût consolidé de la branche.</span></div></div>';
   }
 
+  /* --------------------------------------- Carte des zones d'intervention */
+  /* Carte à symboles proportionnels : chaque zone est un cercle dont la surface
+     est proportionnelle aux bénéficiaires atteints et la couleur au taux de
+     couverture. La projection est celle de Mercator sphérique (EPSG:3857), la
+     même que celle des fonds de carte en tuiles, ce qui permet de superposer
+     facultativement un fond OpenStreetMap sans aucune bibliothèque externe. */
+  const TAILLE_TUILE = 256;
+
+  function lonVersX(lon, zoom) { return (lon + 180) / 360 * Math.pow(2, zoom); }
+  function latVersY(lat, zoom) {
+    const r = lat * Math.PI / 180;
+    return (1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2 * Math.pow(2, zoom);
+  }
+
+  function couleurCouverture(taux) {
+    if (taux === null || taux === undefined) return '#9AA0A6';
+    if (taux >= 80) return '#0F9D58';
+    if (taux >= 50) return '#F9A825';
+    if (taux >= 25) return '#EA8600';
+    return '#D93025';
+  }
+
+  function carte(zones, options) {
+    options = options || {};
+    const localisees = (zones || []).filter(
+      (z) => typeof z.latitude === 'number' && typeof z.longitude === 'number');
+    if (!localisees.length) {
+      return global.SEPIA.vide(
+        'Aucune zone d\'intervention ne porte de coordonnées géographiques. Renseignez la ' +
+        'latitude et la longitude de chaque zone pour afficher la carte de couverture.', '🗺️');
+    }
+
+    // Dimensions adaptées à la largeur disponible : sur téléphone la carte tient
+    // dans l'écran plutôt que d'imposer un défilement horizontal.
+    const largeurDisponible = Math.max(280, (global.innerWidth || 1000) - 90);
+    const largeurCible = Math.min(options.largeur || 860, largeurDisponible);
+    const hauteurCible = Math.min(options.hauteur || 520,
+                                  Math.round(largeurCible * 0.62) + 60);
+    const fondActif = options.fond !== false;
+
+    // Cadre géographique, élargi d'une marge pour ne pas coller les symboles au bord.
+    let latMin = Math.min.apply(null, localisees.map((z) => z.latitude));
+    let latMax = Math.max.apply(null, localisees.map((z) => z.latitude));
+    let lonMin = Math.min.apply(null, localisees.map((z) => z.longitude));
+    let lonMax = Math.max.apply(null, localisees.map((z) => z.longitude));
+    const margeLat = Math.max((latMax - latMin) * 0.25, 0.35);
+    const margeLon = Math.max((lonMax - lonMin) * 0.25, 0.35);
+    latMin -= margeLat; latMax += margeLat; lonMin -= margeLon; lonMax += margeLon;
+
+    // Niveau de zoom : le plus grand qui laisse le cadre géographique tenir dans
+    // la surface visée. Le canevas conserve ensuite les dimensions demandées et
+    // les données y sont centrées, ce qui évite les cartes minuscules lorsque
+    // l'emprise du projet est petite.
+    let zoom = 3;
+    for (let z = 3; z <= 13; z++) {
+      const l = (lonVersX(lonMax, z) - lonVersX(lonMin, z)) * TAILLE_TUILE;
+      const h = (latVersY(latMin, z) - latVersY(latMax, z)) * TAILLE_TUILE;
+      if (l <= largeurCible && h <= hauteurCible) zoom = z; else break;
+    }
+
+    const largeur = Math.round(largeurCible);
+    const hauteur = Math.round(hauteurCible);
+    const centreX = (lonVersX(lonMin, zoom) + lonVersX(lonMax, zoom)) / 2 * TAILLE_TUILE;
+    const centreY = (latVersY(latMin, zoom) + latVersY(latMax, zoom)) / 2 * TAILLE_TUILE;
+    const xMin = centreX - largeur / 2;
+    const yMin = centreY - hauteur / 2;
+    const projeter = (z) => ({
+      x: lonVersX(z.longitude, zoom) * TAILLE_TUILE - xMin,
+      y: latVersY(z.latitude, zoom) * TAILLE_TUILE - yMin
+    });
+    // Le graticule est tracé sur l'emprise réellement visible du canevas.
+    const lonGauche = (xMin / TAILLE_TUILE) / Math.pow(2, zoom) * 360 - 180;
+    const lonDroite = ((xMin + largeur) / TAILLE_TUILE) / Math.pow(2, zoom) * 360 - 180;
+    const yVersLat = (y) => {
+      const n = Math.PI - 2 * Math.PI * (y / TAILLE_TUILE) / Math.pow(2, zoom);
+      return 180 / Math.PI * Math.atan(0.5 * (Math.exp(n) - Math.exp(-n)));
+    };
+    const latHaut = yVersLat(yMin);
+    const latBas = yVersLat(yMin + hauteur);
+
+    // Fond de carte facultatif : tuiles OpenStreetMap chargées en simples images.
+    let tuiles = '';
+    if (fondActif) {
+      const tuileXMin = Math.floor(xMin / TAILLE_TUILE);
+      const tuileXMax = Math.floor((xMin + largeur) / TAILLE_TUILE);
+      const tuileYMin = Math.floor(yMin / TAILLE_TUILE);
+      const tuileYMax = Math.floor((yMin + hauteur) / TAILLE_TUILE);
+      const nombreTuiles = Math.pow(2, zoom);
+      let compteur = 0;
+      for (let tx = tuileXMin; tx <= tuileXMax && compteur < 64; tx++) {
+        for (let ty = tuileYMin; ty <= tuileYMax && compteur < 64; ty++) {
+          if (tx < 0 || ty < 0 || tx >= nombreTuiles || ty >= nombreTuiles) continue;
+          compteur++;
+          tuiles += '<img src="https://tile.openstreetmap.org/' + zoom + '/' + tx + '/' + ty +
+            '.png" alt="" loading="lazy" onerror="this.style.display=\'none\'" ' +
+            'style="position:absolute;left:' + (tx * TAILLE_TUILE - xMin) + 'px;top:' +
+            (ty * TAILLE_TUILE - yMin) + 'px;width:256px;height:256px">';
+        }
+      }
+    }
+
+    // Graticule : repères de latitude et de longitude, indispensables sans fond de carte.
+    let graticule = '';
+    const etendue = Math.max(lonDroite - lonGauche, latHaut - latBas);
+    const pas = etendue > 8 ? 2 : etendue > 4 ? 1 : etendue > 2 ? 0.5 : 0.25;
+    for (let lon = Math.ceil(lonGauche / pas) * pas; lon <= lonDroite; lon += pas) {
+      const x = lonVersX(lon, zoom) * TAILLE_TUILE - xMin;
+      graticule += '<line x1="' + x + '" y1="0" x2="' + x + '" y2="' + hauteur +
+        '" stroke="#1F4E79" stroke-width=".5" stroke-dasharray="3 4" opacity=".28"/>' +
+        '<text x="' + (x + 3) + '" y="' + (hauteur - 5) + '" font-size="9" fill="#1F4E79" ' +
+        'opacity=".7">' + lon.toFixed(2).replace(/\.?0+$/, '') + '°E</text>';
+    }
+    for (let lat = Math.ceil(latBas / pas) * pas; lat <= latHaut; lat += pas) {
+      const y = latVersY(lat, zoom) * TAILLE_TUILE - yMin;
+      graticule += '<line x1="0" y1="' + y + '" x2="' + largeur + '" y2="' + y +
+        '" stroke="#1F4E79" stroke-width=".5" stroke-dasharray="3 4" opacity=".28"/>' +
+        '<text x="4" y="' + (y - 4) + '" font-size="9" fill="#1F4E79" opacity=".7">' +
+        lat.toFixed(2).replace(/\.?0+$/, '') + '°N</text>';
+    }
+
+    // Symboles proportionnels : la surface, non le rayon, porte la quantité.
+    const maxBeneficiaires = Math.max.apply(null,
+      localisees.map((z) => z.beneficiaires_atteints || 0).concat([1]));
+    const rayon = (valeur) => 8 + 26 * Math.sqrt(Math.max(valeur, 0) / maxBeneficiaires);
+
+    // Liens hiérarchiques entre une zone mère et ses zones filles.
+    const parId = {};
+    localisees.forEach((z) => { parId[z.id] = z; });
+    let liens = '';
+    localisees.forEach(function (z) {
+      const parent = z.parent_id ? parId[z.parent_id] : null;
+      if (!parent) return;
+      const a = projeter(parent), b = projeter(z);
+      liens += '<line x1="' + a.x + '" y1="' + a.y + '" x2="' + b.x + '" y2="' + b.y +
+        '" stroke="#1F4E79" stroke-width="1.1" stroke-dasharray="4 3" opacity=".45"/>';
+    });
+
+    // Les zones les plus étendues sont tracées en premier pour rester lisibles.
+    const ordonnees = localisees.slice().sort(
+      (a, b) => (b.beneficiaires_atteints || 0) - (a.beneficiaires_atteints || 0));
+    let symboles = '';
+    ordonnees.forEach(function (z) {
+      const p = projeter(z);
+      const r = rayon(z.beneficiaires_atteints || 0);
+      const couleur = couleurCouverture(z.taux_couverture);
+      const partFemmes = (z.equite_genre || {}).part_femmes;
+      symboles += '<g>' +
+        '<circle cx="' + p.x + '" cy="' + p.y + '" r="' + r + '" fill="' + couleur +
+        '" fill-opacity=".62" stroke="#fff" stroke-width="2"/>' +
+        (partFemmes !== undefined && partFemmes !== null ?
+          '<path d="M ' + p.x + ' ' + (p.y - r) + ' A ' + r + ' ' + r + ' 0 0 0 ' + p.x + ' ' +
+          (p.y + r) + ' Z" fill="#D81B60" fill-opacity=".55"/>' : '') +
+        '<circle cx="' + p.x + '" cy="' + p.y + '" r="2.6" fill="#1F2933"/>' +
+        '<text x="' + p.x + '" y="' + (p.y + r + 13) + '" text-anchor="middle" font-size="10.5" ' +
+        'font-weight="700" fill="#1F2933" stroke="#fff" stroke-width="3" paint-order="stroke">' +
+        ech(z.nom) + '</text>' +
+        '<text x="' + p.x + '" y="' + (p.y + r + 25) + '" text-anchor="middle" font-size="9.5" ' +
+        'fill="#1F4E79" stroke="#fff" stroke-width="3" paint-order="stroke">' +
+        global.SEPIA.nombre(z.beneficiaires_atteints, 0) +
+        (z.taux_couverture !== null && z.taux_couverture !== undefined ?
+          ' (' + global.SEPIA.nombre(z.taux_couverture, 0) + ' %)' : '') + '</text>' +
+        '<title>' + ech(z.nom) + ' — ' + ech(z.niveau || '') + '\n' +
+        'Bénéficiaires atteints : ' + global.SEPIA.nombre(z.beneficiaires_atteints, 0) +
+        (z.cible_beneficiaires ? ' / ' + global.SEPIA.nombre(z.cible_beneficiaires, 0) +
+          ' (' + global.SEPIA.nombre(z.taux_couverture, 1) + ' %)' : '') +
+        (partFemmes !== undefined && partFemmes !== null ?
+          '\nPart des femmes : ' + global.SEPIA.nombre(partFemmes, 1) + ' %' : '') +
+        '\nMesures collectées : ' + (z.nb_mesures || 0) +
+        '\nCoordonnées : ' + z.latitude.toFixed(4) + ', ' + z.longitude.toFixed(4) +
+        '</title></g>';
+    });
+
+    // Échelle métrique : la longueur d'un degré de longitude dépend de la latitude.
+    const latMoyenne = (latBas + latHaut) / 2;
+    const metresParPixel = 156543.03392 * Math.cos(latMoyenne * Math.PI / 180) / Math.pow(2, zoom);
+    const distancesRondes = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000];
+    const kmEchelle = distancesRondes.find(
+      (d) => d * 1000 / metresParPixel >= Math.min(90, largeur / 6)) || 1000;
+    const largeurEchelle = Math.round(kmEchelle * 1000 / metresParPixel);
+    const echelle = '<g transform="translate(14,' + (hauteur - 34) + ')">' +
+      '<rect x="-6" y="-16" width="' + (largeurEchelle + 46) + '" height="28" rx="4" ' +
+      'fill="#fff" fill-opacity=".82"/>' +
+      '<line x1="0" y1="0" x2="' + largeurEchelle + '" y2="0" stroke="#1F2933" stroke-width="2.4"/>' +
+      '<line x1="0" y1="-4" x2="0" y2="4" stroke="#1F2933" stroke-width="2.4"/>' +
+      '<line x1="' + largeurEchelle + '" y1="-4" x2="' + largeurEchelle + '" y2="4" ' +
+      'stroke="#1F2933" stroke-width="2.4"/>' +
+      '<text x="' + (largeurEchelle + 6) + '" y="4" font-size="10" fill="#1F2933">' +
+      kmEchelle + ' km</text></g>';
+
+    // Rose des vents simplifiée.
+    const nord = '<g transform="translate(' + (largeur - 34) + ',26)">' +
+      '<circle r="16" fill="#fff" fill-opacity=".82"/>' +
+      '<path d="M 0 -12 L 5 6 L 0 2 L -5 6 Z" fill="#1F4E79"/>' +
+      '<text y="16" text-anchor="middle" font-size="9" font-weight="700" fill="#1F4E79">N</text></g>';
+
+    const nonLocalisees = (zones || []).length - localisees.length;
+    return '<div class="carte-couverture">' +
+      '<div class="carte-cadre" style="width:' + largeur + 'px;height:' + hauteur + 'px">' +
+      tuiles +
+      '<svg viewBox="0 0 ' + largeur + ' ' + hauteur + '" width="' + largeur + '" height="' +
+      hauteur + '" style="position:absolute;left:0;top:0" role="img">' +
+      graticule + liens + symboles + echelle + nord + '</svg>' +
+      (fondActif ? '<div class="attribution-carte">© Contributeurs OpenStreetMap</div>' : '') +
+      '</div>' +
+      '<div class="legende">' +
+      '<span><i style="background:#0F9D58"></i>Couverture ≥ 80 %</span>' +
+      '<span><i style="background:#F9A825"></i>50 à 79 %</span>' +
+      '<span><i style="background:#EA8600"></i>25 à 49 %</span>' +
+      '<span><i style="background:#D93025"></i>moins de 25 %</span>' +
+      '<span><i style="background:#9AA0A6"></i>cible non fixée</span>' +
+      '<span><i style="background:#D81B60"></i>part des femmes (demi-disque)</span>' +
+      '<span style="color:#5F6368">La surface du cercle est proportionnelle aux bénéficiaires atteints.</span>' +
+      (nonLocalisees > 0 ? '<span style="color:#EA8600">' + nonLocalisees +
+        ' zone(s) sans coordonnées ne figurent pas sur la carte.</span>' : '') +
+      '</div></div>';
+  }
+
+  /* Surveillance du fond de carte : sur un réseau sans accès aux serveurs de
+     tuiles, les images restent en attente indéfiniment. Au bout de quelques
+     secondes sans aucune tuile chargée, le fond est désactivé et mémorisé comme
+     indisponible — la carte reste entièrement lisible grâce au graticule, à
+     l'échelle et aux symboles, qui ne dépendent d'aucune ressource externe. */
+  function surveillerFondCarte(conteneur, surIndisponibilite) {
+    const images = Array.from((conteneur || document).querySelectorAll('.carte-cadre img'));
+    if (!images.length) return;
+    setTimeout(function () {
+      if (!document.body.contains(images[0])) return;
+      const chargees = images.filter((i) => i.complete && i.naturalWidth > 0).length;
+      if (chargees > 0) return;
+      images.forEach((i) => { i.style.display = 'none'; });
+      localStorage.setItem('sepia_fond_carte', '0');
+      localStorage.setItem('sepia_fond_indisponible', '1');
+      const cadre = images[0].closest('.carte-cadre');
+      if (cadre && !cadre.querySelector('.avis-fond-carte')) {
+        const avis = document.createElement('div');
+        avis.className = 'avis-fond-carte';
+        avis.textContent = 'Fond de carte indisponible sur ce réseau — la carte reste ' +
+          'exploitable (graticule, échelle et symboles).';
+        cadre.appendChild(avis);
+      }
+      if (typeof surIndisponibilite === 'function') surIndisponibilite();
+    }, 6000);
+  }
+
   global.Graphiques = {
     anneau: anneau, barres: barres, courbes: courbes, jauge: jauge,
     matriceRisques: matriceRisques, gantt: gantt, colonnes: colonnes,
-    pert: pert, wbs: wbs, PALETTE: PALETTE
+    pert: pert, wbs: wbs, carte: carte, surveillerFondCarte: surveillerFondCarte,
+    PALETTE: PALETTE
   };
 })(window);

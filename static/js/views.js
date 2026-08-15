@@ -172,6 +172,17 @@
         '<p style="font-size:.74rem;color:#5F6368;margin-top:.5rem">Le taux mesure l\'atteinte du jalon de la période évaluée ; la progression finale indique le chemin parcouru depuis la référence vers la cible de fin de projet.</p>');
 
       const zonesDocumentees = (d.zones.detail || []).filter((z) => z.nb_mesures);
+      const zonesLocalisees = (d.zones.detail || []).filter(
+        (z) => z.id !== null && typeof z.latitude === 'number');
+      if (zonesLocalisees.length) {
+        html += S.carte('Carte de couverture du projet',
+          G.carte(zonesLocalisees, {
+            fond: localStorage.getItem('sepia_fond_carte') !== '0',
+            largeur: 760, hauteur: 420
+          }),
+          '<button class="btn btn-secondaire btn-petit" data-lien="zones">Voir le détail</button>',
+          'Surface du cercle : bénéficiaires atteints. Couleur : taux de couverture de la cible de la zone.');
+      }
       if (zonesDocumentees.length) {
         html += S.carte('Couverture par zone d\'intervention',
           G.barres(zonesDocumentees.map((z) => ({
@@ -187,8 +198,10 @@
 
       conteneur.innerHTML = html;
 
-      const lien = conteneur.querySelector('[data-lien="zones"]');
-      if (lien) lien.addEventListener('click', () => global.Application.naviguer('zones'));
+      conteneur.querySelectorAll('[data-lien="zones"]').forEach(function (lien) {
+        lien.addEventListener('click', () => global.Application.naviguer('zones'));
+      });
+      G.surveillerFondCarte(conteneur);
 
       // Actualisation automatique : le tableau de bord reflète les saisies en continu.
       const bascule = document.getElementById('auto-rafraichir');
@@ -2327,6 +2340,14 @@
         S.kpi('Activités documentées', d.activites.length, 'Avec données de collecte rattachées') +
         '</div>';
 
+      const fondActif = localStorage.getItem('sepia_fond_carte') !== '0';
+      html += S.carte('Carte de couverture du projet',
+        G.carte(c.zones.filter((z) => z.id !== null), { fond: fondActif }),
+        '<label style="display:flex;align-items:center;gap:.35rem;font-size:.76rem;color:#5F6368">' +
+        '<input type="checkbox" id="bascule-fond-carte"' + (fondActif ? ' checked' : '') +
+        '> Fond de carte</label>',
+        'Chaque zone est figurée par un cercle dont la surface représente les bénéficiaires atteints et la couleur le taux de couverture.');
+
       if (actives.length) {
         html += S.carte('Bénéficiaires atteints par zone',
           G.barres(actives.map((z) => ({
@@ -2385,6 +2406,19 @@
       }
 
       conteneur.innerHTML = html;
+
+      const bascule = document.getElementById('bascule-fond-carte');
+      if (bascule) {
+        bascule.addEventListener('change', function () {
+          localStorage.setItem('sepia_fond_carte', bascule.checked ? '1' : '0');
+          if (bascule.checked) localStorage.removeItem('sepia_fond_indisponible');
+          global.Application.rafraichir();
+        });
+      }
+      G.surveillerFondCarte(conteneur, function () {
+        if (bascule) bascule.checked = false;
+      });
+
       S.brancherActions(conteneur, {
         modifier: async (id) => zonesVue.ouvrirFormulaire(await S.API.get('/api/zones/' + id)),
         supprimer: (id) => S.confirmer('Supprimer cette zone ? Les mesures qui y sont rattachées seront conservées sans localisation.',

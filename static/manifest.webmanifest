@@ -1,7 +1,7 @@
 {
-  "name": "SEPIA — Planification et suivi-évaluation",
+  "name": "SEPIA — Planification, Suivi-évaluation et Apprentissage des projets et programmes de développement",
   "short_name": "SEPIA",
-  "description": "Plateforme ERP de planification et de suivi-évaluation des projets et programmes de développement.",
+  "description": "Plateforme ERP de planification, de suivi-évaluation et d'apprentissage des projets et programmes de développement.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#1F4E79",

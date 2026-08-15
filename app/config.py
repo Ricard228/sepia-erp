@@ -2,7 +2,8 @@
 import os
 
 APP_NAME = "SEPIA"
-APP_LONG_NAME = "Système d'Évaluation, de Planification, d'Indicateurs et d'Apprentissage"
+APP_LONG_NAME = ("Planification, Suivi-évaluation et Apprentissage des projets et programmes "
+                 "de développement")
 APP_VERSION = "1.0.0"
 
 # --- Base de données -------------------------------------------------------
