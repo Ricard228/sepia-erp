@@ -36,10 +36,15 @@
   const tableauDeBord = {
     titre: 'Tableau de bord',
     sousTitre: 'Pilotage de la performance du projet',
-    actions: () => '<button class="btn btn-secondaire btn-petit" data-barre="imprimer">🖨️ Imprimer</button>' +
+    actions: () => '<label style="display:flex;align-items:center;gap:.3rem;font-size:.76rem;color:#5F6368">' +
+      '<input type="checkbox" id="auto-rafraichir"' +
+      (localStorage.getItem('sepia_auto') === '1' ? ' checked' : '') + '> Actualisation auto</label>' +
+      '<button class="btn btn-secondaire btn-petit" data-barre="actualiser">🔄 Actualiser</button>' +
+      '<button class="btn btn-secondaire btn-petit" data-barre="imprimer">🖨️ Imprimer</button>' +
       '<button class="btn btn-primaire btn-petit" data-barre="tdb-excel">⬇️ Tableau de bord Excel</button>',
     gestionnairesBarre: {
       imprimer: () => window.print(),
+      actualiser: () => global.Application.rafraichir(),
       'tdb-excel': () => S.API.telecharger('/api/exports/' + projet() + '/tableau-de-bord-excel')
     },
     rendre: async function (conteneur) {
@@ -63,6 +68,36 @@
           d.risques.total + ' risques recensés, ' + d.risques.ouverts + ' ouverts',
           d.risques.critiques ? '#D93025' : '#0F9D58') +
         '</div>';
+
+      // Bandeau des dimensions ajoutées : équité, couverture territoriale, qualité
+      const eg = d.desagregation.equite_genre;
+      html += '<div class="grille grille-kpi" style="margin-bottom:1rem">' +
+        S.kpi('Bénéficiaires femmes', eg ? S.nombre(eg.part_femmes, 1) + ' %' : '—',
+          eg ? S.nombre(eg.femmes, 0) + ' sur ' + S.nombre(eg.total, 0) + ' — ' + eg.appreciation :
+            'Aucune ventilation saisie',
+          eg ? (Math.abs(eg.ecart_parite) <= 5 ? '#0F9D58' : '#EA8600') : '#9AA0A6') +
+        S.kpi('Taux de désagrégation',
+          d.desagregation.taux_desagregation === null ? '—' :
+            S.nombre(d.desagregation.taux_desagregation, 0) + ' %',
+          d.desagregation.indicateurs_desagreges + ' / ' +
+            d.desagregation.indicateurs_a_desagreger + ' indicateurs ventilés',
+          d.desagregation.taux_desagregation !== null &&
+            d.desagregation.taux_desagregation >= 80 ? '#0F9D58' : '#EA8600') +
+        S.kpi('Couverture territoriale',
+          d.zones.taux_couverture_zones === null ? '—' :
+            S.nombre(d.zones.taux_couverture_zones, 0) + ' %',
+          d.zones.zones_couvertes + ' / ' + d.zones.nb_zones + ' zones documentées', '#5B9BD5') +
+        S.kpi('Qualité SMART', S.nombre(d.qualite.score_systeme, 0) + ' %',
+          d.qualite.appreciation + ' — ' + d.qualite.a_reprendre + ' à reprendre',
+          d.qualite.score_systeme >= 90 ? '#0F9D58' : d.qualite.score_systeme >= 75 ? '#4CAF50' :
+            d.qualite.score_systeme >= 60 ? '#F9A825' : '#D93025') +
+        '</div>';
+
+      if (d.derniere_mise_a_jour) {
+        html += '<p style="font-size:.74rem;color:#5F6368;margin:-.4rem 0 .8rem">Dernière donnée ' +
+          'enregistrée le ' + new Date(d.derniere_mise_a_jour).toLocaleString('fr-FR') +
+          ' · Affichage généré le ' + new Date().toLocaleString('fr-FR') + '</p>';
+      }
 
       html += '<div class="grille grille-2">';
       html += S.carte('Indice de santé du projet',
@@ -136,7 +171,34 @@
         null) +
         '<p style="font-size:.74rem;color:#5F6368;margin-top:.5rem">Le taux mesure l\'atteinte du jalon de la période évaluée ; la progression finale indique le chemin parcouru depuis la référence vers la cible de fin de projet.</p>');
 
+      const zonesDocumentees = (d.zones.detail || []).filter((z) => z.nb_mesures);
+      if (zonesDocumentees.length) {
+        html += S.carte('Couverture par zone d\'intervention',
+          G.barres(zonesDocumentees.map((z) => ({
+            libelle: z.nom, valeur: z.taux_couverture === null ? 0 : Math.min(z.taux_couverture, 100),
+            etiquette: S.nombre(z.beneficiaires_atteints, 0) +
+              (z.taux_couverture === null ? '' : ' (' + S.nombre(z.taux_couverture, 0) + ' %)'),
+            couleur: z.taux_couverture === null ? '#9AA0A6' :
+              z.taux_couverture >= 80 ? '#0F9D58' : z.taux_couverture >= 50 ? '#F9A825' : '#EA8600'
+          })), { max: 100, largeurLibelle: 200 }),
+          '<button class="btn btn-secondaire btn-petit" data-lien="zones">Voir le détail</button>',
+          'Bénéficiaires atteints rapportés à la cible de chaque zone.');
+      }
+
       conteneur.innerHTML = html;
+
+      const lien = conteneur.querySelector('[data-lien="zones"]');
+      if (lien) lien.addEventListener('click', () => global.Application.naviguer('zones'));
+
+      // Actualisation automatique : le tableau de bord reflète les saisies en continu.
+      const bascule = document.getElementById('auto-rafraichir');
+      if (bascule) {
+        bascule.addEventListener('change', function () {
+          localStorage.setItem('sepia_auto', bascule.checked ? '1' : '0');
+          global.Application.programmerRafraichissement();
+        });
+      }
+      global.Application.programmerRafraichissement();
     }
   };
 
@@ -1600,7 +1662,673 @@
   };
 
   /* =================================================================== */
+  /* 15. Saisie rapide (temps réel, orientée mobile)                      */
+  /* =================================================================== */
+  const saisie = {
+    titre: 'Saisie des réalisations',
+    sousTitre: 'Renseignement des indicateurs en temps réel, désagrégé et localisé',
+    actions: () => '<button class="btn btn-secondaire btn-petit" data-barre="suivi">📈 Vue tableau</button>',
+    gestionnairesBarre: { suivi: () => global.Application.naviguer('suivi') },
+    contexte: null,
+    ouvrirSaisie: function (indicateurId) {
+      const contexte = saisie.contexte;
+      const indicateur = contexte.indicateurs.find((i) => i.id === indicateurId);
+      const categories = (indicateur.disaggregation || []).filter(
+        (c) => (ref('modalites_desagregation') || {})[c]);
+      const modalites = S.Etat.referentiels.modalites_desagregation || {};
+
+      const formulaire = document.createElement('form');
+      formulaire.innerHTML =
+        '<div class="carte" style="box-shadow:none;border:1px solid var(--gris-clair);margin-bottom:.8rem">' +
+        '<strong>' + ech(indicateur.code || '') + ' — ' + ech(indicateur.name) + '</strong>' +
+        '<div style="font-size:.78rem;color:#5F6368;margin-top:.3rem">Unité : ' +
+        ech(indicateur.unit || '—') + ' · Fréquence : ' + ech(indicateur.frequency || '—') +
+        ' · Cible finale : ' + S.nombre(indicateur.target_value, 2) +
+        ' · Consolidation : ' + ech(indicateur.derniere.agregation || 'somme') + '</div></div>' +
+        '<div class="champ-groupe">' +
+        '<div class="champ"><label for="s-periode">Période *</label>' +
+        '<input list="liste-periodes" id="s-periode" value="' +
+        ech(contexte.periodes[contexte.periodes.length - 1] || '') + '" required>' +
+        '<datalist id="liste-periodes">' +
+        contexte.periodes.map((p) => '<option value="' + ech(p) + '">').join('') +
+        '</datalist><div class="aide">Format conseillé : 2025-T3, 2025-S1 ou 2025.</div></div>' +
+        '<div class="champ"><label for="s-date">Date de référence</label>' +
+        '<input type="date" id="s-date" value="' + new Date().toISOString().substring(0, 10) + '"></div>' +
+        '<div class="champ"><label for="s-zone">Zone d\'intervention</label><select id="s-zone">' +
+        '<option value="">— Niveau projet (non localisé) —</option>' +
+        contexte.zones.map((z) => '<option value="' + z.id + '">' + ech(z.name) +
+          ' (' + ech(z.level) + ')</option>').join('') + '</select></div>' +
+        '<div class="champ"><label for="s-activite">Activité source</label><select id="s-activite">' +
+        '<option value="">— Non précisée —</option>' +
+        contexte.activites.map((a) => '<option value="' + a.id + '">' + ech(a.code || '') + ' ' +
+          ech(a.name.substring(0, 50)) + '</option>').join('') + '</select></div>' +
+        '</div>' +
+        '<div class="champ"><label for="s-valeur">Valeur réalisée' +
+        (categories.length ? ' (calculée automatiquement si vous ventilez ci-dessous)' : ' *') +
+        '</label><input type="number" step="any" id="s-valeur"></div>' +
+        (categories.length ? '<div class="section-formulaire">Ventilation des bénéficiaires</div>' +
+          categories.map(function (categorie) {
+            return '<div class="champ"><label>' + ech(categorie) + '</label>' +
+              '<div class="champ-groupe" data-categorie="' + ech(categorie) + '">' +
+              (modalites[categorie] || []).map(function (modalite) {
+                return '<div class="champ"><label style="font-weight:400;font-size:.72rem">' +
+                  ech(modalite) + '</label><input type="number" step="any" ' +
+                  'data-modalite="' + ech(modalite) + '"></div>';
+              }).join('') + '</div>' +
+              '<div class="aide" data-total="' + ech(categorie) + '">Total : 0</div></div>';
+          }).join('') : '') +
+        '<div class="champ-groupe">' +
+        '<div class="champ"><label for="s-source">Source de la donnée</label>' +
+        '<input id="s-source" placeholder="Fiche de collecte, registre, enquête…"></div>' +
+        '<div class="champ"><label for="s-statut">Statut de validation</label>' +
+        '<select id="s-statut"><option>Brouillon</option><option selected>Validé</option>' +
+        '<option>Rejeté</option></select></div></div>' +
+        '<div class="champ"><label for="s-commentaire">Commentaire</label>' +
+        '<textarea id="s-commentaire" rows="2"></textarea></div>';
+      formulaire.addEventListener('submit', (e) => e.preventDefault());
+
+      // La valeur globale se déduit de la première ventilation renseignée.
+      function recalculer() {
+        let premiereSomme = null;
+        categories.forEach(function (categorie) {
+          const bloc = formulaire.querySelector('[data-categorie="' + categorie + '"]');
+          if (!bloc) return;
+          let somme = 0;
+          bloc.querySelectorAll('input').forEach(function (champ) {
+            somme += parseFloat(String(champ.value).replace(',', '.')) || 0;
+          });
+          formulaire.querySelector('[data-total="' + categorie + '"]').textContent =
+            'Total : ' + S.nombre(somme, 2);
+          if (premiereSomme === null && somme > 0) premiereSomme = somme;
+        });
+        if (premiereSomme !== null) formulaire.querySelector('#s-valeur').value = premiereSomme;
+      }
+      formulaire.querySelectorAll('[data-categorie] input').forEach(function (champ) {
+        champ.addEventListener('input', recalculer);
+      });
+
+      S.ouvrirModale('Saisir une réalisation', formulaire, [
+        { libelle: 'Annuler', classe: 'btn-secondaire', action: S.fermerModale },
+        {
+          libelle: 'Enregistrer', classe: 'btn-primaire', action: async function () {
+            const periode = formulaire.querySelector('#s-periode').value.trim();
+            if (!periode) { S.notifier('La période est obligatoire.', 'erreur'); return; }
+            const ventilation = {};
+            categories.forEach(function (categorie) {
+              const bloc = formulaire.querySelector('[data-categorie="' + categorie + '"]');
+              if (!bloc) return;
+              const valeurs = {};
+              bloc.querySelectorAll('input').forEach(function (champ) {
+                const nombre = parseFloat(String(champ.value).replace(',', '.'));
+                if (!isNaN(nombre)) valeurs[champ.dataset.modalite] = nombre;
+              });
+              if (Object.keys(valeurs).length) ventilation[categorie] = valeurs;
+            });
+            const valeurBrute = formulaire.querySelector('#s-valeur').value;
+            if (!valeurBrute && !Object.keys(ventilation).length) {
+              S.notifier('Renseignez une valeur ou une ventilation.', 'erreur');
+              return;
+            }
+            S.basculeChargement(true);
+            try {
+              const resultat = await S.API.post('/api/indicators/' + indicateurId + '/saisie', {
+                period_label: periode,
+                year: parseInt(periode.substring(0, 4), 10) || null,
+                reference_date: formulaire.querySelector('#s-date').value || null,
+                value: valeurBrute === '' ? null : parseFloat(String(valeurBrute).replace(',', '.')),
+                zone_id: parseInt(formulaire.querySelector('#s-zone').value, 10) || null,
+                activity_id: parseInt(formulaire.querySelector('#s-activite').value, 10) || null,
+                disaggregated_values: ventilation,
+                source: formulaire.querySelector('#s-source').value || null,
+                validation_status: formulaire.querySelector('#s-statut').value,
+                comment: formulaire.querySelector('#s-commentaire').value || null
+              });
+              S.notifier((resultat.creee ? 'Mesure créée' : 'Mesure mise à jour') +
+                ' — taux de la période : ' +
+                (resultat.performance.taux === null ? '—' : S.nombre(resultat.performance.taux, 1) + ' %'),
+                'succes');
+              S.fermerModale();
+              global.Application.rafraichir();
+            } catch (erreur) {
+              S.notifier(erreur.message, 'erreur');
+            } finally {
+              S.basculeChargement(false);
+            }
+          }
+        }
+      ], true);
+      recalculer();
+    },
+    rendre: async function (conteneur) {
+      if (!projet()) { conteneur.innerHTML = exigeProjet(); return; }
+      const contexte = await S.API.get('/api/saisie/contexte/' + projet());
+      saisie.contexte = contexte;
+
+      conteneur.innerHTML =
+        '<div class="carte"><div class="barre-outils">' +
+        '<input type="search" id="recherche-saisie" placeholder="Rechercher un indicateur à renseigner…">' +
+        '<select id="filtre-saisie"><option value="">Tous les indicateurs</option>' +
+        '<option value="cles">Indicateurs clés uniquement</option>' +
+        '<option value="vides">Non encore renseignés</option>' +
+        '<option value="retard">À actualiser (statut critique ou à surveiller)</option>' +
+        '</select>' +
+        '<span style="font-size:.78rem;color:#5F6368">' + contexte.zones.length +
+        ' zone(s) · ' + contexte.activites.length + ' activité(s) disponibles</span>' +
+        '</div><div id="liste-saisie"></div></div>';
+
+      function afficher() {
+        const recherche = (document.getElementById('recherche-saisie').value || '').toLowerCase();
+        const filtre = document.getElementById('filtre-saisie').value;
+        const lignes = contexte.indicateurs.filter(function (i) {
+          if (filtre === 'cles' && !i.is_key) return false;
+          if (filtre === 'vides' && i.derniere.actual_value !== null) return false;
+          if (filtre === 'retard' && ['Atteint', 'En bonne voie'].indexOf(i.derniere.statut) >= 0) return false;
+          if (recherche && (i.name + ' ' + (i.code || '')).toLowerCase().indexOf(recherche) < 0) return false;
+          return true;
+        });
+        const zone = document.getElementById('liste-saisie');
+        zone.innerHTML = S.tableau([
+          { titre: 'Code', rendu: (l) => (l.is_key ? '⭐ ' : '') + ech(l.code || '') },
+          { cle: 'name', titre: 'Indicateur' },
+          { titre: 'Niveau', classe: 'centre', rendu: (l) => badgeNiveau(l.level) },
+          { cle: 'unit', titre: 'Unité', classe: 'centre' },
+          { titre: 'Désagrégations', rendu: (l) => (l.disaggregation || []).join(', ') || '—' },
+          { titre: 'Dernière période', classe: 'centre', rendu: (l) => ech(l.derniere.period_label || '—') },
+          { titre: 'Valeur consolidée', classe: 'nombre',
+            rendu: (l) => S.nombre(l.derniere.actual_value, 2) +
+              (l.derniere.nb_mesures_periode > 1 ?
+                '<div style="font-size:.68rem;color:#5F6368">' + l.derniere.nb_mesures_periode +
+                ' mesures (' + ech(l.derniere.agregation) + ')</div>' : '') },
+          { titre: 'Statut', classe: 'centre', rendu: (l) => etiquetteStatut(l.derniere.statut) }
+        ], lignes, [
+          { cle: 'saisir', libelle: '✏️ Saisir', titre: 'Saisir une réalisation', classe: 'btn-primaire' }
+        ]);
+        S.brancherActions(zone, { saisir: (id) => saisie.ouvrirSaisie(id) });
+      }
+      ['recherche-saisie', 'filtre-saisie'].forEach(function (id) {
+        document.getElementById(id).addEventListener('input', afficher);
+      });
+      afficher();
+    }
+  };
+
+  /* =================================================================== */
+  /* 16. Équité et données désagrégées                                    */
+  /* =================================================================== */
+  const equite = {
+    titre: 'Équité et désagrégation',
+    sousTitre: 'Ventilation par sexe, âge et groupe cible — inclusivité des interventions',
+    actions: () => '<select id="periode-equite" class="btn btn-secondaire btn-petit"></select>' +
+      '<button class="btn btn-primaire btn-petit" data-barre="excel">⬇️ Analyse Excel</button>',
+    gestionnairesBarre: {
+      excel: function () {
+        const select = document.getElementById('periode-equite');
+        const periode = select && select.value ? '?periode=' + encodeURIComponent(select.value) : '';
+        S.API.telecharger('/api/exports/' + projet() + '/desagregation-excel' + periode);
+      }
+    },
+    rendre: async function (conteneur) {
+      if (!projet()) { conteneur.innerHTML = exigeProjet(); return; }
+      const periodes = await S.API.get('/api/analyse/periodes/' + projet());
+      const select = document.getElementById('periode-equite');
+      if (select && !select.options.length) {
+        select.innerHTML = '<option value="">Toutes périodes</option>' +
+          periodes.existantes.map((p) => '<option value="' + ech(p) + '">' + ech(p) + '</option>').join('');
+        select.addEventListener('change', () => equite.rendre(conteneur));
+      }
+      const periode = select && select.value ? '?periode=' + encodeURIComponent(select.value) : '';
+      const d = await S.API.get('/api/analyse/desagregation/' + projet() + periode);
+      const g = d.equite_genre;
+
+      let html = '<div class="grille grille-kpi" style="margin-bottom:1rem">' +
+        S.kpi('Bénéficiaires identifiés', g ? S.nombre(g.total, 0) : '—',
+          'Somme des ventilations par sexe') +
+        S.kpi('Dont femmes', g ? S.nombre(g.femmes, 0) : '—',
+          g ? S.nombre(g.part_femmes, 1) + ' % de l\'effectif' : 'Non renseigné', '#D81B60') +
+        S.kpi('Dont hommes', g ? S.nombre(g.hommes, 0) : '—',
+          g ? S.nombre(100 - g.part_femmes, 1) + ' % de l\'effectif' : 'Non renseigné', '#1E88E5') +
+        S.kpi('Écart à la parité', g ? (g.ecart_parite > 0 ? '+' : '') + S.nombre(g.ecart_parite, 1) + ' pts' : '—',
+          g ? g.appreciation : '—',
+          g ? (Math.abs(g.ecart_parite) <= 5 ? '#0F9D58' : '#EA8600') : '#9AA0A6') +
+        S.kpi('Taux de désagrégation', d.taux_desagregation === null ? '—' :
+          S.nombre(d.taux_desagregation, 1) + ' %',
+          d.indicateurs_desagreges + ' / ' + d.indicateurs_a_desagreger + ' indicateurs',
+          d.taux_desagregation !== null && d.taux_desagregation >= 80 ? '#0F9D58' : '#EA8600') +
+        '</div>';
+
+      if (d.taux_desagregation !== null && d.taux_desagregation < 100) {
+        html += '<div class="alerte alerte-warning" style="margin-bottom:1rem"><span class="type">Qualité</span>' +
+          '<span>' + (d.indicateurs_a_desagreger - d.indicateurs_desagreges) +
+          ' indicateur(s) exigent une désagrégation mais n\'en comportent aucune. ' +
+          'Utilisez l\'écran « Saisie des réalisations » pour ventiler les effectifs.</span></div>';
+      }
+
+      if (!d.par_categorie.length) {
+        html += S.carte('Analyse d\'équité',
+          S.vide('Aucune donnée désagrégée n\'a encore été saisie. Renseignez la ventilation lors de la saisie des réalisations, ou importez-la depuis un classeur Excel.', '⚖️'));
+      } else {
+        html += '<div class="grille grille-2">';
+        d.par_categorie.forEach(function (bloc) {
+          const couleurs = bloc.categorie === 'Sexe' ? ['#D81B60', '#1E88E5'] : null;
+          html += S.carte('Ventilation par « ' + bloc.categorie + ' »',
+            G.anneau(bloc.modalites.map(function (m, index) {
+              return { libelle: m.modalite, valeur: m.valeur,
+                       couleur: couleurs ? couleurs[index % 2] : undefined };
+            }), { centre: S.nombre(bloc.total, 0), legendeCentre: 'total' }) +
+            S.tableau([
+              { cle: 'modalite', titre: 'Modalité' },
+              { titre: 'Valeur', classe: 'nombre', rendu: (l) => S.nombre(l.valeur, 2) },
+              { titre: 'Part', classe: 'centre', rendu: (l) => S.nombre(l.part, 1) + ' %' }
+            ], bloc.modalites) +
+            (bloc.modalites_referentielles.length > bloc.modalites.length ?
+              '<p style="font-size:.72rem;color:#EA8600;margin-top:.5rem">Modalités du référentiel non renseignées : ' +
+              ech(bloc.modalites_referentielles.filter(
+                (m) => !bloc.modalites.some((x) => x.modalite === m)).join(', ')) + '</p>' : ''));
+        });
+        html += '</div>';
+      }
+
+      html += S.carte('Détail par indicateur', S.tableau([
+        { titre: 'Code', rendu: (l) => ech(l.code || '') },
+        { cle: 'name', titre: 'Indicateur' },
+        { titre: 'Désagrégations exigées', rendu: (l) => (l.categories_attendues || []).join(', ') || '—' },
+        { titre: 'Manquantes', rendu: (l) => (l.categories_manquantes || []).length ?
+          '<span class="etiquette" style="background:#EA8600">' +
+          ech(l.categories_manquantes.join(', ')) + '</span>' : '<span style="color:#0F9D58">✔ complet</span>' },
+        { titre: 'Femmes', classe: 'nombre', rendu: (l) => l.equite_genre ? S.nombre(l.equite_genre.femmes, 0) : '—' },
+        { titre: 'Hommes', classe: 'nombre', rendu: (l) => l.equite_genre ? S.nombre(l.equite_genre.hommes, 0) : '—' },
+        { titre: 'Part des femmes', classe: 'centre', rendu: (l) => l.equite_genre ?
+          '<span class="etiquette" style="background:' +
+          (Math.abs(l.equite_genre.ecart_parite) <= 5 ? '#0F9D58' :
+           l.equite_genre.part_femmes < 45 ? '#EA8600' : '#2E75B6') + '">' +
+          S.nombre(l.equite_genre.part_femmes, 1) + ' %</span>' : '—' },
+        { titre: 'Mesures', classe: 'centre', rendu: (l) => l.nb_mesures }
+      ], d.lignes));
+      conteneur.innerHTML = html;
+    }
+  };
+
+  /* =================================================================== */
+  /* 17. Zones d'intervention                                             */
+  /* =================================================================== */
+  function champsZone(zones) {
+    return [
+      { nom: 'code', libelle: 'Code', largeur: 'courte' },
+      { nom: 'name', libelle: 'Nom de la zone', obligatoire: true },
+      { nom: 'level', libelle: 'Niveau', type: 'select', options: ref('niveaux_zone'), largeur: 'courte' },
+      { nom: 'parent_id', libelle: 'Zone parente', type: 'select', largeur: 'courte',
+        options: (zones || []).map((z) => ({ valeur: z.id, libelle: (z.code || '') + ' ' + z.name })) },
+      { nom: 'population', libelle: 'Population totale', type: 'number', largeur: 'courte' },
+      { nom: 'beneficiaries_target', libelle: 'Cible de bénéficiaires', type: 'number', largeur: 'courte' },
+      { nom: 'latitude', libelle: 'Latitude', type: 'number', largeur: 'courte' },
+      { nom: 'longitude', libelle: 'Longitude', type: 'number', largeur: 'courte' },
+      { nom: 'responsible', libelle: 'Responsable de zone', largeur: 'courte' },
+      { nom: 'order_index', libelle: 'Ordre d\'affichage', type: 'number', largeur: 'courte' },
+      { nom: 'comment', libelle: 'Observations', type: 'textarea', lignes: 2 }
+    ];
+  }
+
+  const zonesVue = {
+    titre: 'Zones d\'intervention',
+    sousTitre: 'Découpage géographique et consolidation territoriale des réalisations',
+    actions: () => '<button class="btn btn-primaire btn-petit" data-barre="ajouter">➕ Zone</button>' +
+      '<button class="btn btn-secondaire btn-petit" data-barre="excel">⬇️ Consolidation Excel</button>',
+    gestionnairesBarre: {
+      ajouter: () => zonesVue.ouvrirFormulaire(null),
+      excel: () => S.API.telecharger('/api/exports/' + projet() + '/zones-excel')
+    },
+    ouvrirFormulaire: async function (zone) {
+      const zones = await S.API.get('/api/zones?project_id=' + projet());
+      S.formulaireModal(zone ? 'Modifier la zone' : 'Nouvelle zone d\'intervention',
+        champsZone(zones.filter((z) => !zone || z.id !== zone.id)),
+        zone || { level: 'Région' }, async function (donnees) {
+          donnees.project_id = projet();
+          if (zone) await S.API.put('/api/zones/' + zone.id, donnees);
+          else await S.API.post('/api/zones', donnees);
+          S.notifier('Zone enregistrée.', 'succes');
+          global.Application.rafraichir();
+        }, true);
+    },
+    rendre: async function (conteneur) {
+      if (!projet()) { conteneur.innerHTML = exigeProjet(); return; }
+      const d = await S.API.get('/api/analyse/zones/' + projet());
+      const c = d.zones;
+      const actives = c.zones.filter((z) => z.id !== null);
+
+      let html = '<div class="grille grille-kpi" style="margin-bottom:1rem">' +
+        S.kpi('Zones d\'intervention', c.nb_zones, 'Déclarées au projet') +
+        S.kpi('Zones couvertes', c.zones_couvertes,
+          c.taux_couverture_zones === null ? '—' : S.nombre(c.taux_couverture_zones, 0) + ' % de couverture',
+          c.taux_couverture_zones !== null && c.taux_couverture_zones >= 80 ? '#0F9D58' : '#EA8600') +
+        S.kpi('Mesures localisées', c.total_mesures - c.mesures_non_localisees,
+          c.mesures_non_localisees + ' mesure(s) au niveau projet') +
+        S.kpi('Activités documentées', d.activites.length, 'Avec données de collecte rattachées') +
+        '</div>';
+
+      if (actives.length) {
+        html += S.carte('Bénéficiaires atteints par zone',
+          G.barres(actives.map((z) => ({
+            libelle: z.nom, valeur: z.beneficiaires_atteints,
+            etiquette: S.nombre(z.beneficiaires_atteints, 0) +
+              (z.taux_couverture !== null ? ' (' + S.nombre(z.taux_couverture, 0) + ' %)' : ''),
+            couleur: z.taux_couverture === null ? '#5B9BD5' :
+              z.taux_couverture >= 80 ? '#0F9D58' : z.taux_couverture >= 50 ? '#F9A825' : '#EA8600'
+          })), { largeurLibelle: 200 }));
+
+        const avecGenre = actives.filter((z) => z.equite_genre);
+        if (avecGenre.length) {
+          html += S.carte('Part des femmes par zone',
+            G.barres(avecGenre.map((z) => ({
+              libelle: z.nom, valeur: z.equite_genre.part_femmes,
+              etiquette: S.nombre(z.equite_genre.part_femmes, 1) + ' %',
+              couleur: Math.abs(z.equite_genre.ecart_parite) <= 5 ? '#0F9D58' :
+                z.equite_genre.part_femmes < 45 ? '#EA8600' : '#1E88E5'
+            })), { max: 100, largeurLibelle: 200 }),
+            '', 'La ligne de parité se situe à 50 %.');
+        }
+      }
+
+      html += S.carte('Zones d\'intervention et couverture', S.tableau([
+        { cle: 'code', titre: 'Code' },
+        { cle: 'nom', titre: 'Zone' },
+        { cle: 'niveau', titre: 'Niveau', classe: 'centre' },
+        { cle: 'responsable', titre: 'Responsable' },
+        { titre: 'Population', classe: 'nombre', rendu: (l) => S.nombre(l.population, 0) },
+        { titre: 'Cible bénéf.', classe: 'nombre', rendu: (l) => S.nombre(l.cible_beneficiaires, 0) },
+        { titre: 'Atteints', classe: 'nombre', rendu: (l) => S.nombre(l.beneficiaires_atteints, 0) },
+        { titre: 'Couverture', classe: 'centre', rendu: (l) => l.taux_couverture === null ? '—' :
+          barreProgression(Math.min(l.taux_couverture, 100),
+            l.taux_couverture >= 80 ? '#0F9D58' : '#EA8600') },
+        { titre: 'Part des femmes', classe: 'centre', rendu: (l) => l.equite_genre ?
+          S.nombre(l.equite_genre.part_femmes, 1) + ' %' : '—' },
+        { titre: 'Mesures', classe: 'centre', rendu: (l) => l.nb_mesures }
+      ], c.zones, [
+        { cle: 'modifier', libelle: '✏️', condition: (l) => l.id !== null },
+        { cle: 'supprimer', libelle: '🗑️', classe: 'btn-danger', condition: (l) => l.id !== null }
+      ]));
+
+      if (d.activites.length) {
+        html += S.carte('Données collectées par activité', S.tableau([
+          { cle: 'code', titre: 'Code' },
+          { cle: 'libelle', titre: 'Activité' },
+          { cle: 'responsable', titre: 'Responsable' },
+          { titre: 'Avancement', classe: 'centre', rendu: (l) => barreProgression(l.avancement) },
+          { titre: 'Indicateurs renseignés', rendu: (l) => l.indicateurs.map(
+            (i) => ech(i.code) + ' = ' + S.nombre(i.valeur, 2) + ' ' + ech(i.unite || '')).join('<br>') || '—' },
+          { titre: 'Part des femmes', classe: 'centre', rendu: (l) => l.equite_genre ?
+            S.nombre(l.equite_genre.part_femmes, 1) + ' %' : '—' },
+          { titre: 'Mesures', classe: 'centre', rendu: (l) => l.nb_mesures }
+        ], d.activites),
+        '', 'Le rattachement d\'une mesure à une activité permet de relier la collecte de données à la mise en œuvre.');
+      }
+
+      conteneur.innerHTML = html;
+      S.brancherActions(conteneur, {
+        modifier: async (id) => zonesVue.ouvrirFormulaire(await S.API.get('/api/zones/' + id)),
+        supprimer: (id) => S.confirmer('Supprimer cette zone ? Les mesures qui y sont rattachées seront conservées sans localisation.',
+          async function () {
+            await S.API.supprimer('/api/zones/' + id);
+            S.notifier('Zone supprimée.', 'succes');
+            global.Application.rafraichir();
+          })
+      });
+    }
+  };
+
+  /* =================================================================== */
+  /* 18. Qualité SMART des indicateurs                                    */
+  /* =================================================================== */
+  const qualite = {
+    titre: 'Qualité des indicateurs',
+    sousTitre: 'Diagnostic SMART du système de mesure et actions correctrices',
+    actions: () => '<button class="btn btn-primaire btn-petit" data-barre="excel">⬇️ Revue Excel</button>',
+    gestionnairesBarre: {
+      excel: () => S.API.telecharger('/api/exports/' + projet() + '/qualite-smart-excel')
+    },
+    ouvrirRevue: async function (indicateurId, diagnostic) {
+      const criteres = diagnostic.criteres;
+      const formulaire = document.createElement('form');
+      formulaire.innerHTML =
+        '<p style="font-size:.82rem;color:#5F6368">Le contrôle automatique s\'appuie sur les ' +
+        'informations saisies dans la fiche de l\'indicateur. Votre revue manuelle prévaut sur ce ' +
+        'contrôle : cochez le critère si vous l\'estimez satisfait malgré le constat automatique.</p>' +
+        criteres.map(function (critere) {
+          return '<div class="carte" style="box-shadow:none;border:1px solid var(--gris-clair);padding:.7rem;margin-bottom:.6rem">' +
+            '<label style="display:flex;gap:.6rem;align-items:flex-start;font-weight:400">' +
+            '<input type="checkbox" data-critere="' + ech(critere.cle) + '"' +
+            (critere.satisfait ? ' checked' : '') + ' style="margin-top:.25rem">' +
+            '<span><strong>' + ech(critere.libelle) + '</strong><br>' +
+            '<span style="font-size:.8rem">' + ech(critere.question) + '</span><br>' +
+            '<span style="font-size:.74rem;color:#5F6368">Contrôle automatique : ' +
+            ech(critere.controle) + ' → ' +
+            (critere.automatique ? '<span style="color:#0F9D58">satisfait</span>' :
+              '<span style="color:#D93025">non satisfait</span>') + '</span></span></label></div>';
+        }).join('') +
+        '<div class="champ"><label for="q-commentaire">Commentaire de revue</label>' +
+        '<textarea id="q-commentaire" rows="3">' + ech(diagnostic.commentaire || '') + '</textarea></div>' +
+        (diagnostic.recommandations.length ?
+          '<div class="section-formulaire">Actions correctrices recommandées</div>' +
+          diagnostic.recommandations.map((r) => '<div class="alerte alerte-warning"><span>' +
+            ech(r) + '</span></div>').join('') : '');
+      formulaire.addEventListener('submit', (e) => e.preventDefault());
+
+      S.ouvrirModale('Revue SMART — ' + (diagnostic.code || '') + ' ' + diagnostic.name,
+        formulaire, [
+          { libelle: 'Fermer', classe: 'btn-secondaire', action: S.fermerModale },
+          {
+            libelle: 'Enregistrer la revue', classe: 'btn-primaire', action: async function () {
+              const smart = {};
+              formulaire.querySelectorAll('[data-critere]').forEach(function (champ) {
+                smart[champ.dataset.critere] = champ.checked;
+              });
+              S.basculeChargement(true);
+              try {
+                const r = await S.API.post('/api/indicators/' + indicateurId + '/smart', {
+                  smart_check: smart,
+                  smart_comment: formulaire.querySelector('#q-commentaire').value || null
+                });
+                S.notifier('Revue enregistrée — score : ' + r.score + ' %', 'succes');
+                S.fermerModale();
+                global.Application.rafraichir();
+              } catch (erreur) {
+                S.notifier(erreur.message, 'erreur');
+              } finally {
+                S.basculeChargement(false);
+              }
+            }
+          }
+        ], true);
+    },
+    rendre: async function (conteneur) {
+      if (!projet()) { conteneur.innerHTML = exigeProjet(); return; }
+      const d = await S.API.get('/api/analyse/smart/' + projet());
+      const couleurScore = d.score_systeme >= 90 ? '#0F9D58' : d.score_systeme >= 75 ? '#4CAF50' :
+        d.score_systeme >= 60 ? '#F9A825' : '#D93025';
+
+      let html = '<div class="grille grille-kpi" style="margin-bottom:1rem">' +
+        S.kpi('Score du système', S.nombre(d.score_systeme, 1) + ' %', d.appreciation, couleurScore) +
+        S.kpi('Indicateurs évalués', d.total, 'Actifs dans le projet') +
+        S.kpi('Pleinement conformes', d.conformes, 'Score ≥ 90 %', '#0F9D58') +
+        S.kpi('À reprendre', d.a_reprendre, 'Score < 60 %', d.a_reprendre ? '#D93025' : '#0F9D58') +
+        '</div>';
+
+      html += '<div class="grille grille-2">' +
+        S.carte('Score global du système d\'indicateurs',
+          G.jauge(d.score_systeme, { libelle: 'Moyenne des scores SMART individuels' })) +
+        S.carte('Conformité par critère SMART',
+          G.barres(Object.keys(d.par_critere).map(function (critere) {
+            const v = d.par_critere[critere];
+            return { libelle: critere, valeur: v.taux,
+                     etiquette: v.satisfaits + '/' + v.total + ' (' + S.nombre(v.taux, 0) + ' %)',
+                     couleur: v.taux >= 90 ? '#0F9D58' : v.taux >= 70 ? '#F9A825' : '#D93025' };
+          }), { max: 100, largeurLibelle: 175 })) +
+        '</div>';
+
+      html += S.carte('Diagnostic indicateur par indicateur', S.tableau([
+        { titre: 'Code', rendu: (l) => (l.is_key ? '⭐ ' : '') + ech(l.code || '') },
+        { cle: 'name', titre: 'Indicateur' },
+        { titre: 'Niveau', classe: 'centre', rendu: (l) => badgeNiveau(l.level) },
+        { titre: 'S', classe: 'centre', rendu: (l) => marqueCritere(l, 'specifique') },
+        { titre: 'M', classe: 'centre', rendu: (l) => marqueCritere(l, 'mesurable') },
+        { titre: 'A', classe: 'centre', rendu: (l) => marqueCritere(l, 'atteignable') },
+        { titre: 'R', classe: 'centre', rendu: (l) => marqueCritere(l, 'pertinent') },
+        { titre: 'T', classe: 'centre', rendu: (l) => marqueCritere(l, 'temporel') },
+        { titre: 'Score', classe: 'centre', rendu: (l) => '<span class="etiquette" style="background:' +
+          l.couleur + '">' + S.nombre(l.score, 0) + ' %</span>' },
+        { titre: 'Actions recommandées', rendu: (l) => l.recommandations.length ?
+          '<ul style="margin:0;padding-left:1rem">' +
+          l.recommandations.map((r) => '<li style="font-size:.76rem">' + ech(r) + '</li>').join('') +
+          '</ul>' : '<span style="color:#0F9D58">Aucune</span>' },
+        { titre: 'Revue', classe: 'centre', rendu: (l) => l.revue_le ? S.dateFr(l.revue_le) : '—' }
+      ], d.lignes, [
+        { cle: 'revoir', libelle: '🔍', titre: 'Réaliser la revue SMART', classe: 'btn-primaire' },
+        { cle: 'corriger', libelle: '✏️', titre: 'Corriger la fiche de l\'indicateur' }
+      ]),
+      '', 'S = Spécifique · M = Mesurable · A = Atteignable · R = Pertinent (Relevant) · T = Temporellement défini');
+
+      conteneur.innerHTML = html;
+      S.brancherActions(conteneur, {
+        revoir: (id) => qualite.ouvrirRevue(id, d.lignes.find((l) => l.id === id)),
+        corriger: async (id) => indicateurs.ouvrirFormulaire(await S.API.get('/api/indicators/' + id), null)
+      });
+    }
+  };
+
+  function marqueCritere(ligne, cle) {
+    const critere = ligne.criteres.find((c) => c.cle === cle);
+    if (!critere) return '—';
+    return critere.satisfait ? '<span style="color:#0F9D58;font-weight:700">✔</span>' :
+      '<span style="color:#D93025;font-weight:700">✘</span>';
+  }
+
+  /* =================================================================== */
+  /* 19. Rapports périodiques                                             */
+  /* =================================================================== */
+  const rapports = {
+    titre: 'Rapports périodiques',
+    sousTitre: 'Production automatisée des rapports trimestriels, semestriels et annuels',
+    actions: () => '',
+    rendre: async function (conteneur) {
+      if (!projet()) { conteneur.innerHTML = exigeProjet(); return; }
+      const periodes = await S.API.get('/api/analyse/periodes/' + projet());
+      const trimestres = periodes.suggerees.filter((p) => p.indexOf('-T') > 0);
+      const semestres = periodes.suggerees.filter((p) => p.indexOf('-S') > 0);
+      const annees = periodes.suggerees.filter((p) => p.indexOf('-') < 0);
+      const defautT = [...trimestres].reverse().find((p) => periodes.existantes.indexOf(p) >= 0) ||
+        trimestres[0] || '';
+      const defautS = [...semestres].reverse().find((p) => periodes.existantes.indexOf(p) >= 0) ||
+        semestres[0] || '';
+      const defautA = [...annees].reverse().find((p) => periodes.existantes.indexOf(p) >= 0) ||
+        annees[0] || '';
+
+      function selecteur(id, liste, defaut) {
+        return '<select id="' + id + '">' + liste.map((p) => '<option value="' + ech(p) + '"' +
+          (p === defaut ? ' selected' : '') + '>' + ech(p) +
+          (periodes.existantes.indexOf(p) >= 0 ? ' — données disponibles' : '') +
+          '</option>').join('') + '</select>';
+      }
+
+      conteneur.innerHTML =
+        S.carte('Générer un rapport de suivi-évaluation',
+          '<p style="font-size:.85rem">Chaque rapport est produit à partir des données de la ' +
+          'période choisie : performance des indicateurs, analyse d\'équité, consolidation par ' +
+          'zone, exécution physique et financière, difficultés et mesures correctrices, qualité ' +
+          'du dispositif, et bloc de validation à signer.</p>' +
+          '<div class="grille grille-3">' +
+          '<div class="livrable"><span class="format format-Word">Word</span>' +
+          '<h4>Rapport trimestriel de suivi</h4>' +
+          '<p>Suivi rapproché des produits et de l\'exécution.</p>' +
+          selecteur('periode-trimestre', trimestres, defautT) +
+          '<button class="btn btn-primaire btn-petit" data-rapport="trimestriel">⬇️ Générer</button></div>' +
+          '<div class="livrable"><span class="format format-Word">Word</span>' +
+          '<h4>Rapport semestriel d\'avancement</h4>' +
+          '<p>Bilan intermédiaire destiné au comité technique.</p>' +
+          selecteur('periode-semestre', semestres, defautS) +
+          '<button class="btn btn-primaire btn-petit" data-rapport="semestriel">⬇️ Générer</button></div>' +
+          '<div class="livrable"><span class="format format-Word">Word</span>' +
+          '<h4>Rapport annuel de performance</h4>' +
+          '<p>Bilan consolidé pour le comité de pilotage et le bailleur.</p>' +
+          selecteur('periode-annee', annees, defautA) +
+          '<button class="btn btn-primaire btn-petit" data-rapport="annuel">⬇️ Générer</button></div>' +
+          '</div>') +
+        '<div id="apercu-periode"></div>';
+
+      conteneur.querySelectorAll('[data-rapport]').forEach(function (bouton) {
+        bouton.addEventListener('click', function () {
+          const type = bouton.dataset.rapport;
+          const select = document.getElementById('periode-' +
+            { trimestriel: 'trimestre', semestriel: 'semestre', annuel: 'annee' }[type]);
+          S.API.telecharger('/api/exports/' + projet() + '/rapport-' + type + '-word?periode=' +
+            encodeURIComponent(select.value));
+        });
+      });
+
+      ['periode-trimestre', 'periode-semestre', 'periode-annee'].forEach(function (id) {
+        const select = document.getElementById(id);
+        if (select) select.addEventListener('change', () => rapports.apercu(select.value));
+      });
+      rapports.apercu(defautT || defautA);
+    },
+    apercu: async function (periode) {
+      const zone = document.getElementById('apercu-periode');
+      if (!zone || !periode) return;
+      zone.innerHTML = '<div class="vide"><span class="icone">⏳</span>Calcul de la période…</div>';
+      try {
+        const d = await S.API.get('/api/analyse/periode/' + projet() +
+          '?periode=' + encodeURIComponent(periode));
+        const g = d.equite_genre;
+        let html = '<div class="grille grille-kpi" style="margin-bottom:1rem">' +
+          S.kpi('Période analysée', ech(d.periode), d.total_indicateurs + ' indicateurs concernés') +
+          S.kpi('Taux moyen d\'atteinte', d.taux_moyen === null ? '—' : S.nombre(d.taux_moyen, 1) + ' %',
+            d.renseignes + ' indicateur(s) renseignés',
+            d.taux_moyen === null ? '#9AA0A6' : S.couleurStatut(
+              d.taux_moyen >= 100 ? 'Atteint' : d.taux_moyen >= 85 ? 'En bonne voie' :
+              d.taux_moyen >= 60 ? 'À surveiller' : 'Critique')) +
+          S.kpi('Bénéficiaires de la période', g ? S.nombre(g.total, 0) : '—',
+            g ? S.nombre(g.part_femmes, 1) + ' % de femmes' : 'Ventilation non renseignée', '#D81B60') +
+          S.kpi('Exécution financière', S.nombre(d.budget.taux_execution, 1) + ' %',
+            'Exercice ' + (d.budget.annee || '—'), '#EA8600') +
+          S.kpi('Écarts à traiter', d.alertes.length, 'Statut critique ou à surveiller',
+            d.alertes.length ? '#D93025' : '#0F9D58') +
+          '</div>';
+
+        html += S.carte('Aperçu du rapport — performance de la période ' + d.periode,
+          S.tableau([
+            { titre: 'Code', rendu: (l) => (l.is_key ? '⭐ ' : '') + ech(l.code || '') },
+            { cle: 'name', titre: 'Indicateur' },
+            { titre: 'Niveau', classe: 'centre', rendu: (l) => badgeNiveau(l.level) },
+            { titre: 'Période mesurée', classe: 'centre', rendu: (l) => ech(l.periode_mesure || '—') },
+            { titre: 'Cible', classe: 'nombre', rendu: (l) => S.nombre(l.cible_periode, 2) },
+            { titre: 'Réalisé', classe: 'nombre', rendu: (l) => S.nombre(l.realise_periode, 2) },
+            { titre: 'Taux', classe: 'centre', rendu: (l) => l.taux === null ? '—' : S.nombre(l.taux, 1) + ' %' },
+            { titre: 'Statut', classe: 'centre', rendu: (l) => etiquetteStatut(l.statut) },
+            { titre: 'Part des femmes', classe: 'centre', rendu: (l) => l.equite_genre ?
+              S.nombre(l.equite_genre.part_femmes, 1) + ' %' : '—' }
+          ], d.lignes));
+
+        const zonesActives = (d.zones.zones || []).filter((z) => z.nb_mesures && z.id !== null);
+        if (zonesActives.length) {
+          html += S.carte('Consolidation par zone sur la période',
+            G.barres(zonesActives.map((z) => ({
+              libelle: z.nom, valeur: z.beneficiaires_atteints,
+              etiquette: S.nombre(z.beneficiaires_atteints, 0)
+            })), { largeurLibelle: 200 }));
+        }
+        zone.innerHTML = html;
+      } catch (erreur) {
+        zone.innerHTML = '<div class="carte"><div class="alerte alerte-danger"><span>' +
+          ech(erreur.message) + '</span></div></div>';
+      }
+    }
+  };
+
+  /* =================================================================== */
   global.Vues = {
+    'saisie': saisie,
+    'equite': equite,
+    'zones': zonesVue,
+    'qualite': qualite,
+    'rapports': rapports,
     'tableau-de-bord': tableauDeBord,
     'portefeuille': portefeuille,
     'projet': ficheProjet,

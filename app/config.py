@@ -48,3 +48,54 @@ TYPES_QUESTION = [
     "text", "integer", "decimal", "select_one", "select_multiple", "date",
     "time", "geopoint", "note", "calculate", "image", "barcode",
 ]
+
+# --- Désagrégation des indicateurs -----------------------------------------
+# Chaque catégorie de désagrégation porte ses modalités : la saisie et les
+# agrégations s'appuient sur ces listes pour garantir la comparabilité des
+# données d'une période et d'une zone à l'autre.
+MODALITES_DESAGREGATION = {
+    "Sexe": ["Femme", "Homme"],
+    "Âge": ["Moins de 18 ans", "18 à 35 ans", "36 à 59 ans", "60 ans et plus"],
+    "Milieu": ["Urbain", "Rural"],
+    "Groupe cible": ["Producteur", "Transformatrice", "Jeune", "Femme cheffe de ménage",
+                     "Personne en situation de handicap", "Personne déplacée", "Autre"],
+    "Situation de handicap": ["Avec handicap", "Sans handicap"],
+    "Niveau de vulnérabilité": ["Très vulnérable", "Vulnérable", "Non vulnérable"],
+    "Statut d'occupation": ["Propriétaire", "Locataire", "Usufruitier"],
+}
+CATEGORIES_DESAGREGATION = list(MODALITES_DESAGREGATION.keys())
+
+# Catégorie servant au calcul de l'indice d'équité de genre.
+CATEGORIE_GENRE = "Sexe"
+MODALITE_FEMME = "Femme"
+
+# --- Zones d'intervention --------------------------------------------------
+NIVEAUX_ZONE = ["Pays", "Région", "Préfecture", "Commune", "Canton", "Village", "Site"]
+
+# --- Qualité des indicateurs : critères SMART ------------------------------
+CRITERES_SMART = [
+    {"cle": "specifique", "libelle": "Spécifique",
+     "question": "L'indicateur mesure-t-il sans ambiguïté un aspect précis du résultat ?",
+     "controle": "Un libellé précis et une définition opérationnelle sont renseignés."},
+    {"cle": "mesurable", "libelle": "Mesurable",
+     "question": "L'indicateur est-il quantifiable ou objectivement appréciable ?",
+     "controle": "Une unité de mesure et un mode de calcul sont renseignés."},
+    {"cle": "atteignable", "libelle": "Atteignable",
+     "question": "La cible est-elle réaliste au regard des moyens mobilisés ?",
+     "controle": "Une valeur de référence et une cible cohérentes sont renseignées."},
+    {"cle": "pertinent", "libelle": "Pertinent",
+     "question": "L'indicateur rend-il compte du changement recherché ?",
+     "controle": "L'indicateur est rattaché à un résultat du cadre logique."},
+    {"cle": "temporel", "libelle": "Temporellement défini",
+     "question": "L'indicateur est-il assorti d'une échéance et d'une fréquence ?",
+     "controle": "Une échéance de cible et une fréquence de collecte sont renseignées."},
+]
+
+SEUILS_QUALITE = [(90, "Excellente"), (75, "Bonne"), (60, "Acceptable"), (0, "Insuffisante")]
+
+# --- Rapportage périodique -------------------------------------------------
+TYPES_RAPPORT = [
+    {"cle": "trimestriel", "libelle": "Rapport trimestriel de suivi", "granularite": "T"},
+    {"cle": "semestriel", "libelle": "Rapport semestriel d'avancement", "granularite": "S"},
+    {"cle": "annuel", "libelle": "Rapport annuel de performance", "granularite": "A"},
+]

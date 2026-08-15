@@ -7,7 +7,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from .config import APP_LONG_NAME, APP_NAME, APP_VERSION, DATABASE_URL, SEED_DEMO
-from .database import Base, SessionLocal, engine
+from .database import Base, SessionLocal, assurer_schema, engine
 from .routers import auth, entities, exports, imports, powerbi, projects
 from .seed import initialiser
 
@@ -40,6 +40,7 @@ app.add_middleware(
 @app.on_event("startup")
 def demarrage() -> None:
     Base.metadata.create_all(bind=engine)
+    assurer_schema()
     db = SessionLocal()
     try:
         initialiser(db, avec_demo=SEED_DEMO)

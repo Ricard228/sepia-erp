@@ -13,7 +13,7 @@ from ..crud import ensure_project
 from ..database import get_db
 from ..models import Form, Project, User
 from ..security import current_user
-from ..services import excel_export, word_export, xlsform
+from ..services import analytics, excel_export, word_export, xlsform
 
 router = APIRouter(prefix="/api/exports", tags=["Exports"])
 
@@ -24,6 +24,17 @@ MIME_DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.docu
 def _nom_fichier(projet: Project, libelle: str, extension: str) -> str:
     base = re.sub(r"[^0-9A-Za-z_-]+", "_", f"{projet.code}_{libelle}").strip("_")
     return f"{base}_{date.today().isoformat()}.{extension}"
+
+
+def _periode_par_defaut(db: Session, projet: Project, type_rapport: str) -> Optional[str]:
+    """Dernière période renseignée correspondant à la granularité du rapport demandé."""
+    marqueur = {"trimestriel": "-T", "semestriel": "-S"}.get(type_rapport)
+    periodes = analytics.periodes_disponibles(db, projet.id)
+    if marqueur:
+        candidates = [p for p in periodes if marqueur in p]
+    else:  # rapport annuel : périodes strictement annuelles
+        candidates = [p for p in periodes if "-" not in p]
+    return candidates[-1] if candidates else (periodes[-1] if periodes else None)
 
 
 def _reponse(buffer, nom: str, mime: str) -> StreamingResponse:
@@ -59,6 +70,23 @@ LIVRABLES = [
      "description": "Document maître en 15 chapitres, généré à partir des données du projet."},
     {"cle": "rapport-performance-word", "libelle": "Rapport de performance", "format": "Word",
      "description": "Rapport périodique : résumé exécutif, indicateurs, alertes, mesures correctrices."},
+    {"cle": "rapport-trimestriel-word", "libelle": "Rapport trimestriel de suivi", "format": "Word",
+     "description": "Rapport périodé complet : performance, équité, zones, exécution, mesures correctrices.",
+     "periode": True},
+    {"cle": "rapport-semestriel-word", "libelle": "Rapport semestriel d'avancement", "format": "Word",
+     "description": "Même structure que le rapport trimestriel, sur un semestre de rapportage.",
+     "periode": True},
+    {"cle": "rapport-annuel-word", "libelle": "Rapport annuel de performance", "format": "Word",
+     "description": "Bilan annuel consolidé, désagrégé et localisé, prêt pour le comité de pilotage.",
+     "periode": True},
+    {"cle": "desagregation-excel", "libelle": "Analyse d'équité et données désagrégées",
+     "format": "Excel",
+     "description": "Ventilation par sexe, âge et groupe cible ; indice d'équité de genre ; détail par indicateur."},
+    {"cle": "zones-excel", "libelle": "Consolidation par zone d'intervention", "format": "Excel",
+     "description": "Bénéficiaires et indicateurs par zone, taux de couverture, collecte par activité."},
+    {"cle": "qualite-smart-excel", "libelle": "Revue qualité SMART des indicateurs",
+     "format": "Excel",
+     "description": "Diagnostic critère par critère, score du système et actions correctrices."},
     {"cle": "tableau-de-bord-excel", "libelle": "Tableau de bord automatisé", "format": "Excel",
      "description": "KPI, graphiques, alertes et détail des indicateurs."},
     {"cle": "powerbi-dataset", "libelle": "Jeu de données Power BI", "format": "Excel",
@@ -115,6 +143,25 @@ def _produire(cle: str, db: Session, projet: Project, annee: Optional[int] = Non
     if cle == "rapport-performance-word":
         return word_export.rapport_performance_docx(db, projet, periode), \
             _nom_fichier(projet, "Rapport_de_performance", "docx"), MIME_DOCX
+    if cle in ("rapport-trimestriel-word", "rapport-semestriel-word", "rapport-annuel-word"):
+        type_rapport = cle.split("-")[1]
+        periode_retenue = periode or _periode_par_defaut(db, projet, type_rapport)
+        if not periode_retenue:
+            raise HTTPException(
+                status_code=422,
+                detail="Aucune période de rapportage disponible. Renseignez des cibles ou des "
+                       "réalisations, ou précisez la période dans le paramètre « periode ».")
+        return word_export.rapport_periodique_docx(db, projet, periode_retenue, type_rapport), \
+            _nom_fichier(projet, f"Rapport_{type_rapport}_{periode_retenue}", "docx"), MIME_DOCX
+    if cle == "desagregation-excel":
+        return excel_export.desagregation_xlsx(db, projet, periode or None), \
+            _nom_fichier(projet, "Analyse_equite_desagregation", "xlsx"), MIME_XLSX
+    if cle == "zones-excel":
+        return excel_export.zones_xlsx(db, projet, periode or None), \
+            _nom_fichier(projet, "Consolidation_par_zone", "xlsx"), MIME_XLSX
+    if cle == "qualite-smart-excel":
+        return excel_export.qualite_smart_xlsx(db, projet), \
+            _nom_fichier(projet, "Revue_qualite_SMART", "xlsx"), MIME_XLSX
     if cle == "tableau-de-bord-excel":
         return excel_export.tableau_de_bord_xlsx(db, projet), \
             _nom_fichier(projet, "Tableau_de_bord", "xlsx"), MIME_XLSX

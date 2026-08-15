@@ -92,6 +92,7 @@ class Project(Base, TimestampMixin):
     activities = relationship("Activity", back_populates="project", cascade="all, delete-orphan")
     budget_lines = relationship("BudgetLine", back_populates="project", cascade="all, delete-orphan")
     forms = relationship("Form", back_populates="project", cascade="all, delete-orphan")
+    zones = relationship("Zone", cascade="all, delete-orphan")
 
 
 # ---------------------------------------------------------------------------
@@ -163,6 +164,10 @@ class Indicator(Base, TimestampMixin):
     direction = Column(String(20), default="Croissant")   # Croissant | Décroissant | Stable
     # Collecte
     frequency = Column(String(40), default="Trimestrielle")
+    # Règle de consolidation des mesures d'une même période collectées sur
+    # plusieurs zones ou activités : Somme (effectifs, volumes), Moyenne (taux,
+    # ratios, scores) ou Dernière valeur (stocks, états à une date).
+    aggregation = Column(String(20), default="Somme")
     data_source = Column(String(300))
     collection_method = Column(String(200))         # enquête, registre, focus group...
     responsible = Column(String(160))
@@ -170,6 +175,9 @@ class Indicator(Base, TimestampMixin):
     cost_estimate = Column(Float)
     # Qualité
     smart_check = Column(JSON, default=dict)        # {"specifique": true, ...}
+    smart_score = Column(Float)                     # note sur 100, issue de la revue SMART
+    smart_reviewed_at = Column(Date)
+    smart_comment = Column(Text)
     quality_note = Column(Text)
     is_key = Column(Boolean, default=False)         # indicateur clé de performance
     is_active = Column(Boolean, default=True)
@@ -195,7 +203,12 @@ class IndicatorTarget(Base, TimestampMixin):
 
 
 class IndicatorActual(Base, TimestampMixin):
-    """Valeur réalisée, éventuellement désagrégée."""
+    """Valeur réalisée, désagrégée et localisée.
+
+    Une mesure peut être rattachée à une zone d'intervention et à l'activité qui
+    l'a produite : c'est ce qui permet la consolidation par zone et par activité,
+    et l'analyse de l'équité (genre, groupe cible) au niveau du projet.
+    """
     __tablename__ = "indicator_actuals"
     id = Column(Integer, primary_key=True)
     indicator_id = Column(Integer, ForeignKey("indicators.id", ondelete="CASCADE"), nullable=False, index=True)
@@ -203,12 +216,37 @@ class IndicatorActual(Base, TimestampMixin):
     year = Column(Integer)
     reference_date = Column(Date, default=date.today)
     value = Column(Float)
-    disaggregated_values = Column(JSON, default=dict)   # {"Sexe": {"Femme": 120, "Homme": 95}}
+    # {"Sexe": {"Femme": 120, "Homme": 95}, "Groupe cible": {"Jeune": 80, ...}}
+    disaggregated_values = Column(JSON, default=dict)
+    zone_id = Column(Integer, ForeignKey("zones.id", ondelete="SET NULL"), index=True)
+    activity_id = Column(Integer, ForeignKey("activities.id", ondelete="SET NULL"), index=True)
     source = Column(String(300))
     collected_by = Column(String(160))
     validation_status = Column(String(30), default="Brouillon")  # Brouillon|Validé|Rejeté
+    validated_by = Column(String(160))
     comment = Column(Text)
     indicator = relationship("Indicator", back_populates="actuals")
+    zone = relationship("Zone")
+
+
+class Zone(Base, TimestampMixin):
+    """Zone d'intervention du projet (hiérarchie administrative ou opérationnelle)."""
+    __tablename__ = "zones"
+    id = Column(Integer, primary_key=True)
+    project_id = Column(Integer, ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
+    parent_id = Column(Integer, ForeignKey("zones.id", ondelete="SET NULL"))
+    code = Column(String(30))
+    name = Column(String(160), nullable=False)
+    level = Column(String(30), default="Région")     # Région | Préfecture | Commune | Village…
+    population = Column(Integer)
+    beneficiaries_target = Column(Integer)           # cible de bénéficiaires sur la zone
+    latitude = Column(Float)
+    longitude = Column(Float)
+    responsible = Column(String(160))
+    comment = Column(Text)
+    order_index = Column(Integer, default=0)
+
+    parent = relationship("Zone", remote_side=[id], backref="children")
 
 
 # ---------------------------------------------------------------------------

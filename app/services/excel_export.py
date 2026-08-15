@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from ..config import LIBELLES_NIVEAUX
 from ..models import (Activity, Assumption, BudgetLine, Form, FormQuestion, Indicator,
-                      LogframeElement, Project, Risk)
+                      LogframeElement, Project, Risk, Zone)
 from . import analytics
 
 BLEU = "#1F4E79"
@@ -270,7 +270,8 @@ def iptt_xlsx(db: Session, project: Project) -> BytesIO:
     ordre = {"IMPACT": 0, "EFFET": 1, "PRODUIT": 2, "ACTIVITE": 3}
     for ind in sorted(indicateurs, key=lambda i: (ordre.get(i.level, 9), i.code or "")):
         cibles = {t.period_label: t.target_value for t in ind.targets}
-        reels = {a.period_label: a.value for a in ind.actuals}
+        mesurees = {a.period_label for a in ind.actuals if a.value is not None}
+        reels = {p: analytics.valeur_de_periode(ind, p) for p in mesurees}
         ws.write(ligne, 0, ind.level or "", _niveau_format(wb, ind.level or ""))
         ws.write(ligne, 1, ind.code or "", fmt["cellule_c"])
         ws.write(ligne, 2, ind.name, fmt["cellule"])
@@ -739,7 +740,15 @@ def powerbi_dataset_xlsx(db: Session, project: Project) -> BytesIO:
                    i.direction, i.frequency, i.data_source, i.collection_method, i.responsible,
                    "Oui" if i.is_key else "Non"] for i in indicateurs])
 
-    faits_cibles, faits_reels = [], []
+    zones = {z.id: z for z in db.query(Zone).filter(Zone.project_id == project.id).all()}
+    ecrire_table("Dim_Zone",
+                 ["ZoneID", "ProjetID", "ParentID", "Code", "Zone", "Niveau", "Population",
+                  "CibleBeneficiaires", "Latitude", "Longitude", "Responsable"],
+                 [[z.id, z.project_id, z.parent_id, z.code, z.name, z.level, z.population,
+                   z.beneficiaries_target, z.latitude, z.longitude, z.responsible]
+                  for z in zones.values()])
+
+    faits_cibles, faits_reels, faits_desagregation = [], [], []
     for i in indicateurs:
         for t in i.targets:
             faits_cibles.append([t.id, i.id, i.code, t.period_label, t.year,
@@ -747,15 +756,28 @@ def powerbi_dataset_xlsx(db: Session, project: Project) -> BytesIO:
                                  t.period_end.isoformat() if t.period_end else None, t.target_value])
         for a in i.actuals:
             perf = analytics.taux_realisation(i.baseline_value, i.target_value, a.value, i.direction)
+            zone = zones.get(a.zone_id)
             faits_reels.append([a.id, i.id, i.code, a.period_label, a.year,
                                 a.reference_date.isoformat() if a.reference_date else None,
-                                a.value, a.source, a.validation_status, perf,
+                                a.value, a.source, a.zone_id, zone.name if zone else None,
+                                a.activity_id, a.validation_status, perf,
                                 analytics.statut_performance(perf)])
+            for categorie, modalites in (a.disaggregated_values or {}).items():
+                if not isinstance(modalites, dict):
+                    continue
+                for modalite, valeur in modalites.items():
+                    faits_desagregation.append([a.id, i.id, i.code, a.period_label, a.year,
+                                                a.zone_id, zone.name if zone else None,
+                                                categorie, modalite, valeur])
     ecrire_table("Fait_Cible", ["CibleID", "IndicateurID", "CodeIndicateur", "Periode", "Annee",
                                 "DebutPeriode", "FinPeriode", "ValeurCible"], faits_cibles)
     ecrire_table("Fait_Realisation", ["RealisationID", "IndicateurID", "CodeIndicateur", "Periode",
                                       "Annee", "DateReference", "ValeurRealisee", "Source",
-                                      "Validation", "TauxRealisation", "StatutPerformance"], faits_reels)
+                                      "ZoneID", "Zone", "ActiviteID", "Validation",
+                                      "TauxRealisation", "StatutPerformance"], faits_reels)
+    ecrire_table("Fait_Desagregation", ["RealisationID", "IndicateurID", "CodeIndicateur",
+                                        "Periode", "Annee", "ZoneID", "Zone", "Categorie",
+                                        "Modalite", "Valeur"], faits_desagregation)
 
     activites = db.query(Activity).filter(Activity.project_id == project.id).all()
     ecrire_table("Fait_Activite",
@@ -811,15 +833,26 @@ def powerbi_dataset_xlsx(db: Session, project: Project) -> BytesIO:
         "2. Cocher toutes les tables (Dim_* et Fait_*) puis « Charger ».",
         "3. Onglet Modèle : créer les relations (1 → *) suivantes :",
         "     Dim_Projet[ProjetID]        →  Dim_Resultat[ProjetID], Fait_Activite[ProjetID],",
-        "                                     Fait_Budget[ProjetID], Fait_Risque[ProjetID]",
+        "                                     Fait_Budget[ProjetID], Fait_Risque[ProjetID],",
+        "                                     Dim_Zone[ProjetID]",
         "     Dim_Resultat[ResultatID]    →  Dim_Indicateur[ResultatID], Fait_Activite[ResultatID]",
-        "     Dim_Indicateur[IndicateurID]→  Fait_Cible[IndicateurID], Fait_Realisation[IndicateurID]",
+        "     Dim_Indicateur[IndicateurID]→  Fait_Cible[IndicateurID], Fait_Realisation[IndicateurID],",
+        "                                     Fait_Desagregation[IndicateurID]",
+        "     Dim_Zone[ZoneID]            →  Fait_Realisation[ZoneID], Fait_Desagregation[ZoneID]",
         "     Dim_Calendrier[AnneeTrimestre] → Fait_Realisation[Periode] (relation *:* si besoin)",
         "4. Mesures DAX recommandées :",
         "     Taux de réalisation = DIVIDE(SUM(Fait_Realisation[ValeurRealisee]), SUM(Fait_Cible[ValeurCible]))",
         "     Taux d'exécution budgétaire = DIVIDE(SUM(Fait_Budget[Decaisse]), SUM(Fait_Budget[TotalPlanifie]))",
         "     Avancement physique moyen = AVERAGE(Fait_Activite[Avancement])",
         "     Risques critiques = CALCULATE(COUNTROWS(Fait_Risque), Fait_Risque[Niveau] = \"Critique\")",
+        "     Bénéficiaires femmes = CALCULATE(SUM(Fait_Desagregation[Valeur]),",
+        "                                       Fait_Desagregation[Categorie] = \"Sexe\",",
+        "                                       Fait_Desagregation[Modalite] = \"Femme\")",
+        "     Part des femmes = DIVIDE([Bénéficiaires femmes],",
+        "                              CALCULATE(SUM(Fait_Desagregation[Valeur]),",
+        "                                        Fait_Desagregation[Categorie] = \"Sexe\"))",
+        "5. Visuels suggérés : carte à partir de Dim_Zone[Latitude]/[Longitude], histogramme empilé",
+        "   segmenté par Fait_Desagregation[Modalite], et matrice indicateurs × périodes.",
         "",
         "ACTUALISATION AUTOMATIQUE (recommandée) : plutôt que ce fichier, connectez Power BI",
         "directement au flux web de la plateforme :",
@@ -835,7 +868,303 @@ def powerbi_dataset_xlsx(db: Session, project: Project) -> BytesIO:
 
 
 # ---------------------------------------------------------------------------
-# 9. Modèle d'import
+# 9. Désagrégation et analyse d'équité
+# ---------------------------------------------------------------------------
+def desagregation_xlsx(db: Session, project: Project, periode: str = None) -> BytesIO:
+    """Analyse des données désagrégées : par catégorie, par indicateur, équité de genre."""
+    synthese = analytics.synthese_desagregation(db, project.id, periode)
+    buffer = BytesIO()
+    wb = xlsxwriter.Workbook(buffer, {"in_memory": True})
+    fmt = _formats(wb)
+
+    ws = wb.add_worksheet("Synthèse équité")
+    ws.set_landscape()
+    ligne = _entete_feuille(ws, fmt, project,
+                            "ANALYSE DES DONNÉES DÉSAGRÉGÉES ET DE L'ÉQUITÉ")
+    ws.set_column(0, 0, 30)
+    ws.set_column(1, 5, 18)
+
+    equite = synthese["equite_genre"]
+    ws.write(ligne, 0, "Indicateurs à désagréger", fmt["gras"])
+    ws.write(ligne, 1, synthese["indicateurs_a_desagreger"], fmt["entier"])
+    ws.write(ligne + 1, 0, "Indicateurs effectivement désagrégés", fmt["gras"])
+    ws.write(ligne + 1, 1, synthese["indicateurs_desagreges"], fmt["entier"])
+    ws.write(ligne + 2, 0, "Taux de désagrégation (%)", fmt["gras"])
+    ws.write(ligne + 2, 1, synthese["taux_desagregation"] if synthese["taux_desagregation"]
+             is not None else "—", fmt["cellule_c"])
+    if equite:
+        ws.write(ligne + 3, 0, "Bénéficiaires femmes", fmt["gras"])
+        ws.write(ligne + 3, 1, equite["femmes"], fmt["nombre"])
+        ws.write(ligne + 4, 0, "Bénéficiaires hommes", fmt["gras"])
+        ws.write(ligne + 4, 1, equite["hommes"], fmt["nombre"])
+        ws.write(ligne + 5, 0, "Part des femmes (%)", fmt["gras"])
+        ws.write(ligne + 5, 1, equite["part_femmes"], fmt["cellule_c"])
+        ws.write(ligne + 6, 0, "Écart à la parité (points)", fmt["gras"])
+        ws.write(ligne + 6, 1, equite["ecart_parite"], fmt["cellule_c"])
+        ws.write(ligne + 7, 0, "Appréciation", fmt["gras"])
+        ws.write(ligne + 7, 1, equite["appreciation"], fmt["cellule"])
+    ligne += 9
+
+    depart_graphique = None
+    for bloc in synthese["par_categorie"]:
+        ws.write(ligne, 0, f"Catégorie : {bloc['categorie']}", fmt["entete"])
+        for col, titre in enumerate(["Modalité", "Valeur cumulée", "Part (%)"], start=1):
+            ws.write(ligne, col, titre, fmt["entete"])
+        ligne += 1
+        if depart_graphique is None and bloc["categorie"] == "Sexe":
+            depart_graphique = ligne
+        for modalite in bloc["modalites"]:
+            ws.write(ligne, 0, "", fmt["cellule"])
+            ws.write(ligne, 1, modalite["modalite"], fmt["cellule"])
+            ws.write(ligne, 2, modalite["valeur"], fmt["nombre"])
+            ws.write(ligne, 3, modalite["part"], fmt["cellule_c"])
+            ligne += 1
+        ws.write(ligne, 1, "Total", fmt["gras"])
+        ws.write(ligne, 2, bloc["total"], fmt["total"])
+        ligne += 2
+
+    # Détail par indicateur
+    ws2 = wb.add_worksheet("Détail par indicateur")
+    ws2.set_landscape()
+    ws2.set_paper(8)
+    l2 = _entete_feuille(ws2, fmt, project, "DONNÉES DÉSAGRÉGÉES PAR INDICATEUR")
+    categories = sorted({c for l in synthese["lignes"] for c in l["valeurs"].keys()})
+    modalites_par_categorie = {}
+    for categorie in categories:
+        modalites = sorted({m for l in synthese["lignes"]
+                            for m in (l["valeurs"].get(categorie) or {}).keys()})
+        modalites_par_categorie[categorie] = modalites
+
+    entetes = ["Code", "Indicateur", "Unité", "Désagrégations exigées", "Manquantes"]
+    for col, (titre, largeur) in enumerate(zip(entetes, [10, 46, 12, 26, 24])):
+        ws2.write(l2, col, titre, fmt["entete"])
+        ws2.set_column(col, col, largeur)
+    col = len(entetes)
+    for categorie in categories:
+        for modalite in modalites_par_categorie[categorie]:
+            ws2.write(l2, col, f"{categorie}\n{modalite}", fmt["entete"])
+            ws2.set_column(col, col, 13)
+            col += 1
+    ws2.write(l2, col, "Part des femmes (%)", fmt["entete"])
+    ws2.set_column(col, col, 16)
+    ws2.set_row(l2, 34)
+    l2 += 1
+
+    for ligne_ind in synthese["lignes"]:
+        ws2.write(l2, 0, ligne_ind["code"] or "", fmt["cellule_c"])
+        ws2.write(l2, 1, ligne_ind["name"], fmt["cellule"])
+        ws2.write(l2, 2, ligne_ind["unit"] or "", fmt["cellule_c"])
+        ws2.write(l2, 3, ", ".join(ligne_ind["categories_attendues"]) or "—", fmt["cellule"])
+        ws2.write(l2, 4, ", ".join(ligne_ind.get("categories_manquantes") or []) or "—",
+                  fmt["cellule_g"] if ligne_ind.get("categories_manquantes") else fmt["cellule"])
+        col = len(entetes)
+        for categorie in categories:
+            valeurs = ligne_ind["valeurs"].get(categorie) or {}
+            for modalite in modalites_par_categorie[categorie]:
+                valeur = valeurs.get(modalite)
+                ws2.write(l2, col, valeur if valeur is not None else "", fmt["cellule_c"])
+                col += 1
+        equite_ind = ligne_ind.get("equite_genre")
+        ws2.write(l2, col, equite_ind["part_femmes"] if equite_ind else "", fmt["cellule_c"])
+        l2 += 1
+    if synthese["lignes"]:
+        ws2.autofilter(l2 - len(synthese["lignes"]) - 1, 0, l2 - 1, 4)
+
+    if depart_graphique:
+        graphique = wb.add_chart({"type": "pie"})
+        nb = len([b for b in synthese["par_categorie"] if b["categorie"] == "Sexe"][0]["modalites"])
+        graphique.add_series({
+            "name": "Répartition par sexe",
+            "categories": ["Synthèse équité", depart_graphique, 1, depart_graphique + nb - 1, 1],
+            "values": ["Synthèse équité", depart_graphique, 2, depart_graphique + nb - 1, 2],
+            "data_labels": {"percentage": True, "category": True},
+            "points": [{"fill": {"color": "#D81B60"}}, {"fill": {"color": "#1E88E5"}}],
+        })
+        graphique.set_title({"name": "Répartition des bénéficiaires par sexe"})
+        graphique.set_size({"width": 480, "height": 320})
+        ws.insert_chart(ligne + 1, 0, graphique)
+    wb.close()
+    buffer.seek(0)
+    return buffer
+
+
+# ---------------------------------------------------------------------------
+# 10. Consolidation par zone d'intervention
+# ---------------------------------------------------------------------------
+def zones_xlsx(db: Session, project: Project, periode: str = None) -> BytesIO:
+    consolidation = analytics.consolidation_par_zone(db, project.id, periode)
+    activites = analytics.consolidation_par_activite(db, project.id, periode)
+    buffer = BytesIO()
+    wb = xlsxwriter.Workbook(buffer, {"in_memory": True})
+    fmt = _formats(wb)
+
+    ws = wb.add_worksheet("Consolidation par zone")
+    ws.set_landscape()
+    ws.set_paper(8)
+    ligne = _entete_feuille(ws, fmt, project,
+                            "CONSOLIDATION DES DONNÉES PAR ZONE D'INTERVENTION")
+    entetes = ["Code", "Zone", "Niveau", "Responsable", "Population", "Cible bénéficiaires",
+               "Bénéficiaires atteints", "Taux de couverture (%)", "Part des femmes (%)",
+               "Nombre de mesures"]
+    for col, (titre, largeur) in enumerate(zip(entetes, [10, 26, 14, 20, 14, 16, 18, 16, 16, 14])):
+        ws.write(ligne, col, titre, fmt["entete"])
+        ws.set_column(col, col, largeur)
+    ws.set_row(ligne, 32)
+    ligne += 1
+    depart = ligne
+    for zone in consolidation["zones"]:
+        equite = zone.get("equite_genre") or {}
+        valeurs = [zone["code"] or "", zone["nom"], zone["niveau"], zone["responsable"] or "",
+                   zone["population"], zone["cible_beneficiaires"], zone["beneficiaires_atteints"],
+                   zone["taux_couverture"], equite.get("part_femmes"), zone["nb_mesures"]]
+        for col, valeur in enumerate(valeurs):
+            if col in (4, 5, 6):
+                ws.write(ligne, col, valeur if valeur is not None else "", fmt["nombre"])
+            elif col in (7, 8, 9):
+                ws.write(ligne, col, valeur if valeur is not None else "", fmt["cellule_c"])
+            else:
+                ws.write(ligne, col, valeur, fmt["cellule"])
+        ligne += 1
+    if consolidation["zones"]:
+        ws.autofilter(depart - 1, 0, ligne - 1, len(entetes) - 1)
+        ws.conditional_format(depart, 7, ligne - 1, 7, {
+            "type": "3_color_scale", "min_color": "#F4C7C3", "mid_color": "#FCE8B2",
+            "max_color": "#B7E1CD"})
+        graphique = wb.add_chart({"type": "column"})
+        graphique.add_series({
+            "name": "Bénéficiaires atteints",
+            "categories": ["Consolidation par zone", depart, 1, ligne - 1, 1],
+            "values": ["Consolidation par zone", depart, 6, ligne - 1, 6],
+            "fill": {"color": "#2E75B6"}})
+        graphique.add_series({
+            "name": "Cible de bénéficiaires",
+            "categories": ["Consolidation par zone", depart, 1, ligne - 1, 1],
+            "values": ["Consolidation par zone", depart, 5, ligne - 1, 5],
+            "fill": {"color": "#9DC3E6"}})
+        graphique.set_title({"name": "Couverture des bénéficiaires par zone"})
+        graphique.set_size({"width": 820, "height": 380})
+        ws.insert_chart(ligne + 2, 0, graphique)
+
+    # Détail indicateur × zone
+    ws2 = wb.add_worksheet("Indicateurs par zone")
+    l2 = _entete_feuille(ws2, fmt, project, "RÉALISATIONS PAR INDICATEUR ET PAR ZONE")
+    for col, (titre, largeur) in enumerate(zip(
+            ["Zone", "Code indicateur", "Indicateur", "Unité", "Valeur cumulée", "Nb de mesures"],
+            [26, 14, 50, 12, 16, 14])):
+        ws2.write(l2, col, titre, fmt["entete"])
+        ws2.set_column(col, col, largeur)
+    l2 += 1
+    for zone in consolidation["zones"]:
+        for indicateur in zone["indicateurs"]:
+            for col, valeur in enumerate([zone["nom"], indicateur["code"], indicateur["libelle"],
+                                          indicateur["unite"] or "", indicateur["valeur"],
+                                          indicateur["nb_mesures"]]):
+                ws2.write(l2, col, valeur, fmt["nombre"] if col == 4 else fmt["cellule"])
+            l2 += 1
+
+    # Collecte par activité
+    ws3 = wb.add_worksheet("Collecte par activité")
+    l3 = _entete_feuille(ws3, fmt, project, "DONNÉES COLLECTÉES PAR ACTIVITÉ")
+    for col, (titre, largeur) in enumerate(zip(
+            ["Code", "Activité", "Responsable", "Avancement (%)", "Statut", "Nb de mesures",
+             "Indicateurs renseignés", "Part des femmes (%)"],
+            [10, 46, 20, 14, 14, 14, 40, 16])):
+        ws3.write(l3, col, titre, fmt["entete"])
+        ws3.set_column(col, col, largeur)
+    l3 += 1
+    for activite in activites:
+        equite = activite.get("equite_genre") or {}
+        valeurs = [activite["code"] or "", activite["libelle"], activite["responsable"] or "",
+                   activite["avancement"], activite["statut"] or "", activite["nb_mesures"],
+                   ", ".join(f"{i['code']} = {i['valeur']:g}" for i in activite["indicateurs"]),
+                   equite.get("part_femmes")]
+        for col, valeur in enumerate(valeurs):
+            ws3.write(l3, col, valeur if valeur is not None else "",
+                      fmt["cellule_c"] if col in (3, 5, 7) else fmt["cellule"])
+        l3 += 1
+    wb.close()
+    buffer.seek(0)
+    return buffer
+
+
+# ---------------------------------------------------------------------------
+# 11. Qualité SMART du système d'indicateurs
+# ---------------------------------------------------------------------------
+def qualite_smart_xlsx(db: Session, project: Project) -> BytesIO:
+    synthese = analytics.synthese_qualite_smart(db, project.id)
+    buffer = BytesIO()
+    wb = xlsxwriter.Workbook(buffer, {"in_memory": True})
+    fmt = _formats(wb)
+    ws = wb.add_worksheet("Qualité SMART")
+    ws.set_landscape()
+    ws.set_paper(8)
+    ligne = _entete_feuille(ws, fmt, project,
+                            "REVUE DE LA QUALITÉ DU SYSTÈME D'INDICATEURS (test SMART)")
+    ws.set_column(0, 0, 12)
+    ws.write(ligne, 0, "Score du système (%)", fmt["gras"])
+    ws.write(ligne, 1, synthese["score_systeme"], fmt["cellule_c"])
+    ws.write(ligne, 2, synthese["appreciation"], fmt["cellule"])
+    ws.write(ligne + 1, 0, "Indicateurs conformes (score ≥ 90 %)", fmt["gras"])
+    ws.write(ligne + 1, 1, synthese["conformes"], fmt["entier"])
+    ws.write(ligne + 2, 0, "Indicateurs à reprendre (score < 60 %)", fmt["gras"])
+    ws.write(ligne + 2, 1, synthese["a_reprendre"], fmt["entier"])
+    ligne += 4
+
+    ws.write(ligne, 0, "Critère", fmt["entete"])
+    ws.write(ligne, 1, "Indicateurs satisfaisants", fmt["entete"])
+    ws.write(ligne, 2, "Taux (%)", fmt["entete"])
+    ligne += 1
+    depart = ligne
+    for critere, valeurs in synthese["par_critere"].items():
+        ws.write(ligne, 0, critere, fmt["cellule"])
+        ws.write(ligne, 1, valeurs["satisfaits"], fmt["entier"])
+        ws.write(ligne, 2, valeurs["taux"], fmt["cellule_c"])
+        ligne += 1
+    if synthese["par_critere"]:
+        graphique = wb.add_chart({"type": "bar"})
+        graphique.add_series({
+            "name": "Taux de conformité par critère",
+            "categories": ["Qualité SMART", depart, 0, ligne - 1, 0],
+            "values": ["Qualité SMART", depart, 2, ligne - 1, 2],
+            "fill": {"color": "#2E75B6"}, "data_labels": {"value": True}})
+        graphique.set_title({"name": "Conformité par critère SMART (%)"})
+        graphique.set_size({"width": 560, "height": 320})
+        ws.insert_chart(depart - 1, 4, graphique)
+
+    ws2 = wb.add_worksheet("Détail par indicateur")
+    l2 = _entete_feuille(ws2, fmt, project, "DIAGNOSTIC SMART INDICATEUR PAR INDICATEUR")
+    entetes = ["Code", "Indicateur", "Niveau"] + \
+              [c["libelle"] for c in analytics.CRITERES_SMART] + \
+              ["Score (%)", "Appréciation", "Actions correctrices recommandées"]
+    largeurs = [10, 44, 13] + [13] * len(analytics.CRITERES_SMART) + [11, 16, 60]
+    for col, (titre, largeur) in enumerate(zip(entetes, largeurs)):
+        ws2.write(l2, col, titre, fmt["entete"])
+        ws2.set_column(col, col, largeur)
+    ws2.set_row(l2, 32)
+    l2 += 1
+    for ligne_ind in synthese["lignes"]:
+        ws2.write(l2, 0, ligne_ind["code"] or "", fmt["cellule_c"])
+        ws2.write(l2, 1, ligne_ind["name"], fmt["cellule"])
+        ws2.write(l2, 2, ligne_ind["level"] or "", fmt["cellule_c"])
+        for index, critere in enumerate(ligne_ind["criteres"]):
+            ws2.write(l2, 3 + index, "Oui" if critere["satisfait"] else "Non",
+                      wb.add_format({"border": 1, "align": "center", "bold": True,
+                                     "font_color": "white",
+                                     "bg_color": "#0F9D58" if critere["satisfait"] else "#D93025"}))
+        col = 3 + len(ligne_ind["criteres"])
+        ws2.write(l2, col, ligne_ind["score"], fmt["cellule_c"])
+        ws2.write(l2, col + 1, ligne_ind["appreciation"], fmt["cellule"])
+        ws2.write(l2, col + 2, " • ".join(ligne_ind["recommandations"]) or "Aucune", fmt["cellule"])
+        l2 += 1
+    if synthese["lignes"]:
+        ws2.autofilter(l2 - len(synthese["lignes"]) - 1, 0, l2 - 1, len(entetes) - 1)
+    wb.close()
+    buffer.seek(0)
+    return buffer
+
+
+# ---------------------------------------------------------------------------
+# 12. Modèle d'import
 # ---------------------------------------------------------------------------
 def modele_import_xlsx() -> BytesIO:
     """Classeur type à remplir puis à réimporter dans SEPIA."""
@@ -858,6 +1187,13 @@ def modele_import_xlsx() -> BytesIO:
         "  • Les nombres décimaux utilisent le point ou la virgule ; pas de séparateur de milliers.",
         "  • Onglet Indicateurs : « Code résultat » relie l'indicateur au cadre logique.",
         "  • Onglet Budget : « Code activité » relie la ligne budgétaire au chronogramme.",
+        "  • Onglet Zones : renseignez les zones d'intervention avant les réalisations, afin que",
+        "    celles-ci puissent y être rattachées (colonne « Zone » de l'onglet Réalisations).",
+        "  • Désagrégation : dans l'onglet Réalisations, ajoutez autant de colonnes que nécessaire",
+        "    au format « Catégorie - Modalité » (ex. « Sexe - Femme », « Groupe cible - Jeune »).",
+        "    Les catégories reconnues sont : Sexe, Âge, Milieu, Groupe cible, Situation de handicap,",
+        "    Niveau de vulnérabilité, Statut d'occupation. Une écriture compacte est également",
+        "    acceptée dans une colonne « Désagrégation » : Sexe:Femme=210;Sexe:Homme=255",
         "  • Les lignes vides sont ignorées ; un code déjà présent met à jour l'enregistrement existant.",
     ]
     for index, texte in enumerate(instructions):
@@ -900,8 +1236,22 @@ def modele_import_xlsx() -> BytesIO:
         ),
         "Réalisations": (
             ["Code indicateur", "Période", "Année", "Date de référence", "Valeur réalisée",
-             "Source", "Collecté par", "Statut"],
-            [["IP1.1", "2025-T1", 2025, "2025-03-31", 465, "Fiches de présence", "Animateur Nord", "Validé"]],
+             "Zone", "Code activité", "Sexe - Femme", "Sexe - Homme",
+             "Âge - Moins de 18 ans", "Âge - 18 à 35 ans", "Âge - 36 à 59 ans",
+             "Âge - 60 ans et plus", "Groupe cible - Jeune",
+             "Groupe cible - Femme cheffe de ménage", "Source", "Collecté par", "Statut"],
+            [["IP1.1", "2025-T1", 2025, "2025-03-31", 465, "SAV", "A1.1.1", 210, 255,
+              12, 240, 180, 33, 190, 64, "Fiches de présence", "Animateur Nord", "Validé"]],
+        ),
+        "Zones": (
+            ["Code", "Zone", "Niveau", "Code parent", "Population", "Cible bénéficiaires",
+             "Latitude", "Longitude", "Responsable"],
+            [["SAV", "Région des Savanes", "Région", "", 1050000, 15000, 10.85, 0.20,
+              "Coordonnateur régional Nord"],
+             ["SAV-TON", "Préfecture de Tône", "Préfecture", "SAV", 350000, 6000, 10.87, 0.21,
+              "Animateur de zone"],
+             ["KAR", "Région de la Kara", "Région", "", 980000, 10000, 9.55, 1.19,
+              "Coordonnateur régional Kara"]],
         ),
         "Activités": (
             ["Code", "Libellé de l'activité", "Code résultat", "Responsable", "Partenaires",

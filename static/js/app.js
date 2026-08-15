@@ -12,16 +12,22 @@
     { groupe: 'Planification' },
     { cle: 'cadre-logique', libelle: 'Cadre logique', icone: '🧭' },
     { cle: 'indicateurs', libelle: 'Indicateurs', icone: '🎯' },
+    { cle: 'zones', libelle: 'Zones d\'intervention', icone: '🗺️' },
     { cle: 'activites', libelle: 'Chronogramme', icone: '📅' },
     { cle: 'budget', libelle: 'PTBA et budget', icone: '💰' },
-    { groupe: 'Suivi-évaluation' },
+    { groupe: 'Collecte et suivi' },
+    { cle: 'saisie', libelle: 'Saisir les réalisations', icone: '✏️' },
     { cle: 'suivi', libelle: 'Cadre de suivi', icone: '📈' },
-    { cle: 'risques', libelle: 'Risques et hypothèses', icone: '⚠️' },
     { cle: 'collecte', libelle: 'Fiches et questionnaires', icone: '📝' },
-    { groupe: 'Données et livrables' },
-    { cle: 'imports', libelle: 'Importer', icone: '⬆️' },
+    { groupe: 'Analyse et évaluation' },
+    { cle: 'equite', libelle: 'Équité et désagrégation', icone: '⚖️' },
+    { cle: 'qualite', libelle: 'Qualité des indicateurs', icone: '🔍' },
+    { cle: 'risques', libelle: 'Risques et hypothèses', icone: '⚠️' },
+    { groupe: 'Rapportage' },
+    { cle: 'rapports', libelle: 'Rapports périodiques', icone: '📑' },
     { cle: 'livrables', libelle: 'Livrables', icone: '📦' },
     { cle: 'powerbi', libelle: 'Power BI', icone: '⚡' },
+    { cle: 'imports', libelle: 'Importer', icone: '⬆️' },
     { groupe: 'Système' },
     { cle: 'administration', libelle: 'Administration', icone: '⚙️' }
   ];
@@ -182,6 +188,25 @@
 
     rafraichir() {
       Application.naviguer(S.Etat.vue);
+    },
+
+    /* Actualisation périodique du tableau de bord, activable par l'utilisateur.
+       Le minuteur est reprogrammé à chaque rendu et annulé hors du tableau de bord. */
+    minuteur: null,
+    programmerRafraichissement() {
+      if (Application.minuteur) {
+        clearTimeout(Application.minuteur);
+        Application.minuteur = null;
+      }
+      if (localStorage.getItem('sepia_auto') !== '1') return;
+      Application.minuteur = setTimeout(function () {
+        if (S.Etat.vue === 'tableau-de-bord' && !document.hidden &&
+            document.getElementById('fond-modale').classList.contains('masque')) {
+          Application.naviguer('tableau-de-bord');
+        } else {
+          Application.programmerRafraichissement();
+        }
+      }, 60000);
     }
   };
 

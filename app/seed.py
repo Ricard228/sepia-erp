@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from .config import ADMIN_EMAIL, ADMIN_NAME, ADMIN_PASSWORD
 from .models import (Activity, Assumption, BudgetLine, Form, FormQuestion, Indicator,
-                     IndicatorActual, IndicatorTarget, LogframeElement, Project, Risk, User)
+                     IndicatorActual, IndicatorTarget, LogframeElement, Project, Risk, User, Zone)
 from .security import hash_password
 
 
@@ -71,6 +71,36 @@ def _projet_demonstration(db: Session) -> None:
     )
     db.add(projet)
     db.flush()
+
+    # --- Zones d'intervention ---------------------------------------------
+    definitions_zones = [
+        ("SAV", "Région des Savanes", "Région", None, 1_050_000, 15_000, 10.85, 0.20,
+         "Coordonnateur régional Nord"),
+        ("SAV-TON", "Préfecture de Tône", "Préfecture", "SAV", 350_000, 6_000, 10.87, 0.21,
+         "Animateur de zone Tône"),
+        ("SAV-KPD", "Préfecture de Kpendjal", "Préfecture", "SAV", 280_000, 5_000, 11.04, 0.42,
+         "Animateur de zone Kpendjal"),
+        ("SAV-OTI", "Préfecture de l'Oti", "Préfecture", "SAV", 420_000, 4_000, 10.43, 0.36,
+         "Animateur de zone Oti"),
+        ("KAR", "Région de la Kara", "Région", None, 980_000, 10_000, 9.55, 1.19,
+         "Coordonnateur régional Kara"),
+        ("KAR-KOZ", "Préfecture de la Kozah", "Préfecture", "KAR", 320_000, 4_500, 9.55, 1.19,
+         "Animateur de zone Kozah"),
+        ("KAR-BIN", "Préfecture de Binah", "Préfecture", "KAR", 210_000, 3_000, 9.85, 1.32,
+         "Animateur de zone Binah"),
+        ("KAR-DOU", "Préfecture de Doufelgou", "Préfecture", "KAR", 180_000, 2_500, 9.75, 1.10,
+         "Animateur de zone Doufelgou"),
+    ]
+    objets_zones = {}
+    for position, (code, nom, niveau, parent, population, cible, latitude, longitude,
+                   responsable) in enumerate(definitions_zones):
+        zone = Zone(project_id=projet.id, code=code, name=nom, level=niveau,
+                    population=population, beneficiaries_target=cible, latitude=latitude,
+                    longitude=longitude, responsible=responsable, order_index=position,
+                    parent_id=objets_zones[parent].id if parent else None)
+        db.add(zone)
+        db.flush()
+        objets_zones[code] = zone
 
     # --- Cadre logique ----------------------------------------------------
     impact = LogframeElement(
@@ -160,55 +190,55 @@ def _projet_demonstration(db: Session) -> None:
         #  méthode, responsable, clé, désagrégation)
         ("IOG1", impact, "IMPACT", "Incidence de la pauvreté monétaire dans la zone d'intervention",
          "%", 58.8, 45.0, "Décroissant", "Annuelle", "EHCVM / enquête panel du projet",
-         "Enquête auprès des ménages", "INSEED / Expert S&E", True, ["Sexe du chef de ménage", "Région"]),
+         "Enquête auprès des ménages", "INSEED / Expert S&E", True, ["Sexe", "Milieu"]),
         ("IOG2", impact, "IMPACT", "Prévalence de l'insécurité alimentaire modérée ou sévère "
                                    "chez les ménages bénéficiaires",
          "%", 42.0, 25.0, "Décroissant", "Annuelle", "Enquête FIES annuelle",
-         "Échelle FIES (FAO)", "Expert S&E", True, ["Sexe", "Région", "Milieu (urbain/rural)"]),
+         "Échelle FIES (FAO)", "Expert S&E", True, ["Sexe", "Milieu", "Niveau de vulnérabilité"]),
         ("IOG3", impact, "IMPACT", "Score de diversité alimentaire des ménages (HDDS)",
          "Score", 4.2, 6.5, "Croissant", "Annuelle", "Enquête ménages",
-         "Questionnaire de rappel 24 heures", "Expert S&E", False, ["Région"]),
+         "Questionnaire de rappel 24 heures", "Expert S&E", False, ["Sexe", "Milieu"]),
         ("IOS1.1", effet1, "EFFET", "Rendement moyen du maïs sur les parcelles accompagnées",
          "t/ha", 1.15, 2.50, "Croissant", "Annuelle", "Enquête agricole du projet",
-         "Mesure de carrés de rendement", "Agronome S&E", True, ["Sexe", "Région"]),
+         "Mesure de carrés de rendement", "Agronome S&E", True, ["Sexe"]),
         ("IOS1.2", effet1, "EFFET", "Rendement moyen du riz paddy en bas-fonds aménagés",
          "t/ha", 1.80, 4.00, "Croissant", "Annuelle", "Enquête agricole du projet",
-         "Mesure de carrés de rendement", "Agronome S&E", True, ["Région"]),
+         "Mesure de carrés de rendement", "Agronome S&E", True, ["Sexe"]),
         ("IOS1.3", effet1, "EFFET", "Proportion de producteurs appliquant au moins trois "
                                     "pratiques agricoles intelligentes face au climat",
          "%", 12.0, 60.0, "Croissant", "Annuelle", "Enquête d'adoption",
          "Observation directe et entretien", "Agronome S&E", False, ["Sexe", "Âge"]),
         ("IOS2.1", effet2, "EFFET", "Revenu agricole annuel moyen par exploitation accompagnée",
          "FCFA", 385000, 750000, "Croissant", "Annuelle", "Enquête revenus des ménages",
-         "Questionnaire budget-consommation", "Économiste S&E", True, ["Sexe", "Région"]),
+         "Questionnaire budget-consommation", "Économiste S&E", True, ["Sexe", "Groupe cible"]),
         ("IOS2.2", effet2, "EFFET", "Volume de production commercialisé par les organisations "
                                     "de producteurs appuyées",
          "Tonne", 4200, 22000, "Croissant", "Semestrielle", "Registres des coopératives",
-         "Dépouillement des registres", "Responsable chaînes de valeur", True, ["Région"]),
+         "Dépouillement des registres", "Responsable chaînes de valeur", True, ["Groupe cible"]),
         ("IP1.1", elements_produits["P1.1"], "PRODUIT", "Nombre de producteurs formés aux "
                                                         "itinéraires techniques améliorés",
          "Nombre", 0, 15000, "Croissant", "Trimestrielle", "Fiches de présence aux formations",
-         "Registre de formation", "Responsable Formation", True, ["Sexe", "Âge", "Région"]),
+         "Registre de formation", "Responsable Formation", True, ["Sexe", "Âge", "Groupe cible"]),
         ("IP1.2", elements_produits["P1.2"], "PRODUIT", "Quantité de semences certifiées "
                                                         "distribuées aux producteurs",
          "Tonne", 0, 950, "Croissant", "Trimestrielle", "Bordereaux de livraison",
-         "Dépouillement documentaire", "Responsable Intrants", False, ["Région"]),
+         "Dépouillement documentaire", "Responsable Intrants", False, ["Sexe"]),
         ("IP1.3", elements_produits["P1.3"], "PRODUIT", "Superficie de bas-fonds aménagée et "
                                                         "réceptionnée",
          "Hectare", 0, 800, "Croissant", "Trimestrielle", "PV de réception des travaux",
-         "Contrôle technique", "Ingénieur Génie rural", True, ["Région"]),
+         "Contrôle technique", "Ingénieur Génie rural", True, []),
         ("IP2.1", elements_produits["P2.1"], "PRODUIT", "Nombre de coopératives disposant d'un "
                                                         "plan d'affaires validé et opérationnel",
          "Nombre", 8, 120, "Croissant", "Semestrielle", "Rapports d'accompagnement",
-         "Grille d'évaluation organisationnelle", "Responsable OP", False, ["Région"]),
+         "Grille d'évaluation organisationnelle", "Responsable OP", False, ["Sexe"]),
         ("IP2.2", elements_produits["P2.2"], "PRODUIT", "Nombre de magasins de stockage construits "
                                                         "et fonctionnels",
          "Nombre", 0, 40, "Croissant", "Trimestrielle", "PV de réception et rapports de suivi",
-         "Visite de terrain", "Responsable Infrastructures", False, ["Région"]),
+         "Visite de terrain", "Responsable Infrastructures", False, []),
         ("IP2.3", elements_produits["P2.2"], "PRODUIT", "Taux de pertes post-récolte au niveau "
                                                         "des exploitations appuyées",
          "%", 28.0, 10.0, "Décroissant", "Annuelle", "Enquête post-récolte",
-         "Pesée et estimation en exploitation", "Agronome S&E", False, ["Région"]),
+         "Pesée et estimation en exploitation", "Agronome S&E", False, ["Milieu"]),
     ]
     indicateurs = {}
     for (code, element, niveau, libelle, unite, reference, cible, sens, frequence, source,
@@ -223,55 +253,27 @@ def _projet_demonstration(db: Session) -> None:
             definition=f"Mesure de « {libelle.lower()} » sur le périmètre d'intervention du projet.",
             formula="Voir manuel de suivi-évaluation, section 5.",
             cost_estimate=2_500_000 if niveau in ("IMPACT", "EFFET") else 600_000,
-            smart_check={"specifique": True, "mesurable": True, "atteignable": True,
-                         "pertinent": True, "temporel": True},
             reporting_level="Comité de pilotage" if cle else "Comité technique")
         db.add(indicateur)
         db.flush()
         indicateurs[code] = indicateur
 
-    # --- Cibles trimestrielles et réalisations ---------------------------
-    jalons_produits = {
-        "IP1.1": [(f"2025-T{t}", v) for t, v in zip((1, 2, 3, 4), (900, 2100, 3400, 4800))],
-        "IP1.2": [(f"2025-T{t}", v) for t, v in zip((1, 2, 3, 4), (40, 110, 180, 260))],
-        "IP1.3": [(f"2025-T{t}", v) for t, v in zip((1, 2, 3, 4), (0, 60, 140, 210))],
-        "IP2.1": [("2025-S1", 25), ("2025-S2", 48)],
-        "IP2.2": [(f"2025-T{t}", v) for t, v in zip((1, 2, 3, 4), (2, 6, 11, 15))],
-    }
-    realisations = {
-        "IP1.1": [("2025-T1", 845), ("2025-T2", 1980), ("2025-T3", 3260)],
-        "IP1.2": [("2025-T1", 38), ("2025-T2", 104), ("2025-T3", 166)],
-        "IP1.3": [("2025-T1", 0), ("2025-T2", 45), ("2025-T3", 96)],
-        "IP2.1": [("2025-S1", 22)],
-        "IP2.2": [("2025-T1", 1), ("2025-T2", 4), ("2025-T3", 6)],
-    }
-    # Jalons annuels 2025 des indicateurs d'effet et d'impact (issus du PTBA)
-    jalons_annuels = {"IOG1": 58.0, "IOG2": 40.0, "IOG3": 4.6, "IOS1.1": 1.50, "IOS1.2": 2.20,
-                      "IOS1.3": 25.0, "IOS2.1": 450000, "IOS2.2": 8000}
-    for code, valeur in jalons_annuels.items():
-        db.add(IndicatorTarget(indicator_id=indicateurs[code].id, period_label="2025",
-                               year=2025, target_value=valeur))
-    for code, jalons in jalons_produits.items():
-        for periode, valeur in jalons:
-            db.add(IndicatorTarget(indicator_id=indicateurs[code].id, period_label=periode,
-                                   year=2025, target_value=valeur))
-    mois_fin = {"T1": (3, 31), "T2": (6, 30), "T3": (9, 30), "T4": (12, 31),
-                "S1": (6, 30), "S2": (12, 31)}
-    for code, mesures in realisations.items():
-        for periode, valeur in mesures:
-            suffixe = periode.split("-")[1]
-            mois, jour = mois_fin[suffixe]
-            db.add(IndicatorActual(indicator_id=indicateurs[code].id, period_label=periode,
-                                   year=2025, reference_date=date(2025, mois, jour), value=valeur,
-                                   source="Système de suivi interne", collected_by="Assistant S&E",
-                                   validation_status="Validé"))
-    # Premières mesures d'effet (enquête annuelle 2025)
-    for code, valeur in (("IOS1.1", 1.42), ("IOS1.2", 2.05), ("IOS1.3", 21.0),
-                         ("IOS2.1", 431000), ("IOS2.2", 5600), ("IOG1", 57.1), ("IOG2", 39.5)):
-        db.add(IndicatorActual(indicator_id=indicateurs[code].id, period_label="2025",
-                               year=2025, reference_date=date(2025, 12, 31), value=valeur,
-                               source="Enquête annuelle 2025", collected_by="Cabinet d'études",
-                               validation_status="Validé"))
+    # Règle de consolidation : un revenu moyen par exploitation se moyenne, il ne
+    # s'additionne pas. Les taux, scores et rendements sont déduits de leur unité.
+    indicateurs["IOS2.1"].aggregation = "Moyenne"
+    for code in ("IOG1", "IOG2", "IOG3", "IOS1.1", "IOS1.2", "IOS1.3", "IP2.3"):
+        indicateurs[code].aggregation = "Moyenne"
+
+    # Trois indicateurs sont volontairement laissés incomplets : ils illustrent le
+    # diagnostic de qualité SMART et les actions correctrices qu'il recommande.
+    indicateurs["IOG3"].definition = None
+    indicateurs["IOG3"].formula = None
+    indicateurs["IOG3"].collection_method = None
+    indicateurs["IP1.2"].formula = None
+    indicateurs["IP1.2"].definition = None
+    indicateurs["IP2.3"].target_date = None
+    indicateurs["IP2.3"].frequency = None
+    db.flush()
 
     # --- Activités et chronogramme ---------------------------------------
     activites = [
@@ -332,6 +334,90 @@ def _projet_demonstration(db: Session) -> None:
         db.add(activite)
         db.flush()
         objets_activites[code] = activite
+
+    # --- Cibles trimestrielles et réalisations ---------------------------
+    jalons_produits = {
+        "IP1.1": [(f"2025-T{t}", v) for t, v in zip((1, 2, 3, 4), (900, 2100, 3400, 4800))],
+        "IP1.2": [(f"2025-T{t}", v) for t, v in zip((1, 2, 3, 4), (40, 110, 180, 260))],
+        "IP1.3": [(f"2025-T{t}", v) for t, v in zip((1, 2, 3, 4), (0, 60, 140, 210))],
+        "IP2.1": [("2025-S1", 25), ("2025-S2", 48)],
+        "IP2.2": [(f"2025-T{t}", v) for t, v in zip((1, 2, 3, 4), (2, 6, 11, 15))],
+    }
+    realisations = {
+        "IP1.1": [("2025-T1", 845), ("2025-T2", 1980), ("2025-T3", 3260)],
+        "IP1.2": [("2025-T1", 38), ("2025-T2", 104), ("2025-T3", 166)],
+        "IP1.3": [("2025-T1", 0), ("2025-T2", 45), ("2025-T3", 96)],
+        "IP2.1": [("2025-S1", 22)],
+        "IP2.2": [("2025-T1", 1), ("2025-T2", 4), ("2025-T3", 6)],
+    }
+    # Jalons annuels 2025 des indicateurs d'effet et d'impact (issus du PTBA)
+    jalons_annuels = {"IOG1": 58.0, "IOG2": 40.0, "IOG3": 4.6, "IOS1.1": 1.50, "IOS1.2": 2.20,
+                      "IOS1.3": 25.0, "IOS2.1": 450000, "IOS2.2": 8000}
+    for code, valeur in jalons_annuels.items():
+        db.add(IndicatorTarget(indicator_id=indicateurs[code].id, period_label="2025",
+                               year=2025, target_value=valeur))
+    for code, jalons in jalons_produits.items():
+        for periode, valeur in jalons:
+            db.add(IndicatorTarget(indicator_id=indicateurs[code].id, period_label=periode,
+                                   year=2025, target_value=valeur))
+    mois_fin = {"T1": (3, 31), "T2": (6, 30), "T3": (9, 30), "T4": (12, 31),
+                "S1": (6, 30), "S2": (12, 31)}
+    # Répartition des réalisations entre les préfectures d'intervention et part
+    # de femmes observée : les mesures sont enregistrées zone par zone, ce qui
+    # alimente la consolidation géographique et l'analyse d'équité.
+    repartition_zones = {"SAV-TON": 0.22, "SAV-KPD": 0.16, "SAV-OTI": 0.14,
+                         "KAR-KOZ": 0.20, "KAR-BIN": 0.15, "KAR-DOU": 0.13}
+    part_femmes_zone = {"SAV-TON": 0.46, "SAV-KPD": 0.41, "SAV-OTI": 0.38,
+                        "KAR-KOZ": 0.52, "KAR-BIN": 0.49, "KAR-DOU": 0.44}
+    activite_source = {"IP1.1": "A1.1.2", "IP1.2": "A1.2.1", "IP1.3": "A1.3.2",
+                       "IP2.1": "A2.1.1", "IP2.2": "A2.2.1"}
+    # Indicateurs portant sur des personnes : ils sont ventilés par sexe, âge et groupe cible.
+    indicateurs_personnes = {"IP1.1", "IP2.1"}
+    parts_age = {"Moins de 18 ans": 0.03, "18 à 35 ans": 0.47,
+                 "36 à 59 ans": 0.40, "60 ans et plus": 0.10}
+    parts_groupe = {"Producteur": 0.70, "Jeune": 0.22, "Femme cheffe de ménage": 0.08}
+
+    for code, mesures in realisations.items():
+        activite = objets_activites.get(activite_source.get(code))
+        for periode, valeur_totale in mesures:
+            suffixe = periode.split("-")[1]
+            mois, jour = mois_fin[suffixe]
+            reste = valeur_totale
+            zones_ordonnees = list(repartition_zones.items())
+            for position, (code_zone, part) in enumerate(zones_ordonnees):
+                derniere = position == len(zones_ordonnees) - 1
+                valeur = round(reste if derniere else valeur_totale * part, 2)
+                if valeur_totale >= 20:      # effectifs entiers pour les grands nombres
+                    valeur = float(int(valeur))
+                reste = round(reste - valeur, 2)
+                if valeur <= 0:
+                    continue
+                ventilation = {}
+                if code in indicateurs_personnes:
+                    femmes = float(int(valeur * part_femmes_zone[code_zone]))
+                    ventilation = {
+                        "Sexe": {"Femme": femmes, "Homme": valeur - femmes},
+                        "Âge": {libelle: float(int(valeur * p))
+                                for libelle, p in parts_age.items()},
+                        "Groupe cible": {libelle: float(int(valeur * p))
+                                         for libelle, p in parts_groupe.items()},
+                    }
+                db.add(IndicatorActual(
+                    indicator_id=indicateurs[code].id, period_label=periode, year=2025,
+                    reference_date=date(2025, mois, jour), value=valeur,
+                    zone_id=objets_zones[code_zone].id,
+                    activity_id=activite.id if activite else None,
+                    disaggregated_values=ventilation,
+                    source="Fiches de collecte terrain consolidées",
+                    collected_by="Assistant S&E", validated_by="Responsable S&E",
+                    validation_status="Validé"))
+    # Premières mesures d'effet (enquête annuelle 2025)
+    for code, valeur in (("IOS1.1", 1.42), ("IOS1.2", 2.05), ("IOS1.3", 21.0),
+                         ("IOS2.1", 431000), ("IOS2.2", 5600), ("IOG1", 57.1), ("IOG2", 39.5)):
+        db.add(IndicatorActual(indicator_id=indicateurs[code].id, period_label="2025",
+                               year=2025, reference_date=date(2025, 12, 31), value=valeur,
+                               source="Enquête annuelle 2025", collected_by="Cabinet d'études",
+                               validation_status="Validé"))
 
     # --- Budget / PTBA ----------------------------------------------------
     lignes_budget = [

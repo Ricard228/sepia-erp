@@ -18,22 +18,36 @@ suivi-évaluation, tableaux de bord Excel et flux Power BI.
 | **Portefeuille** | Vue consolidée multi-projets : indice de santé, budgets, alertes, duplication de projet |
 | **Fiche projet** | Identification, ancrage institutionnel, théorie du changement, alignement stratégique (ODD, stratégies nationales) |
 | **Cadre logique** | Arborescence Impact → Effets → Produits → Activités, sources de vérification, hypothèses, responsables |
+| **Zones d'intervention** | Découpage géographique hiérarchisé, population, cible de bénéficiaires, coordonnées, responsable de zone |
 | **Chronogramme** | Diagramme de Gantt interactif, jalons, dépendances, détection automatique des retards |
 | **PTBA / budget** | Lignes budgétaires détaillées, ventilation trimestrielle, engagements et décaissements |
 
-### Suivi-évaluation
+### Collecte et suivi
 | Module | Contenu |
 |---|---|
-| **Indicateurs** | Fiche métadonnée complète (définition, formule, désagrégations, référence, cible, fréquence, source, méthode, responsable, coût, test SMART) |
-| **Cadre de suivi (IPTT)** | Grille cibles/réalisations par période avec **saisie directe en ligne** |
-| **Cadre de rendement** | Performance Measurement Framework avec taux calculés et statuts colorés |
-| **Risques & hypothèses** | Registre coté probabilité × impact, matrice 5×5, risque résiduel, plans de contingence, suivi de validation des hypothèses |
+| **Saisie des réalisations** | Écran temps réel : période, **zone**, **activité source**, ventilation par sexe / âge / groupe cible, total calculé automatiquement, statut de validation |
+| **Cadre de suivi (IPTT)** | Grille cibles/réalisations par période avec saisie directe en ligne |
 | **Collecte** | Concepteur de questionnaires (sections, types, modalités, contraintes, logique de saut, calculs), export Word et XLSForm |
-| **Tableaux de bord** | KPI, indice de santé pondéré, graphiques SVG, alertes priorisées |
+
+### Analyse et évaluation
+| Module | Contenu |
+|---|---|
+| **Indicateurs** | Fiche métadonnée complète (définition, formule, désagrégations, référence, cible, règle d'agrégation, fréquence, source, méthode, responsable, coût) |
+| **Équité et désagrégation** | Ventilation consolidée par catégorie, **indice d'équité de genre**, écart à la parité, part des femmes par indicateur et par zone, détection des désagrégations manquantes |
+| **Qualité des indicateurs** | Diagnostic **SMART** critère par critère (contrôle automatique + revue manuelle), score du système, actions correctrices recommandées |
+| **Risques & hypothèses** | Registre coté probabilité × impact, matrice 5×5, risque résiduel, plans de contingence, suivi de validation des hypothèses |
+| **Tableaux de bord** | KPI, indice de santé pondéré, équité, couverture territoriale, qualité SMART, graphiques SVG, alertes priorisées, actualisation automatique |
+
+### Rapportage
+| Module | Contenu |
+|---|---|
+| **Rapports périodiques** | Génération des rapports **trimestriels, semestriels et annuels** avec aperçu à l'écran avant production |
+| **Livrables** | 22 documents Word / Excel / ZIP produits à la demande |
+| **Power BI** | Flux temps réel et modèle en étoile, table de faits désagrégée et dimension géographique |
 
 ### Méthodologie de calcul de la performance
 
-Deux taux sont produits pour chaque indicateur, conformément à la gestion axée sur les résultats :
+**Deux taux** sont produits pour chaque indicateur, conformément à la gestion axée sur les résultats :
 
 - **Taux de la période** — `réalisé ÷ cible de la même période` : c'est lui qui détermine le statut
   de performance, car comparer une réalisation intermédiaire à la cible de fin de projet
@@ -44,14 +58,32 @@ Les indicateurs à progression décroissante (taux de pauvreté, pertes post-ré
 symétriquement. Statuts : **Atteint** ≥ 100 %, **En bonne voie** ≥ 85 %, **À surveiller** ≥ 60 %,
 **Critique** < 60 %.
 
+**Règle d'agrégation.** Un indicateur mesuré sur plusieurs zones produit plusieurs mesures pour la
+même période. La consolidation suit une règle portée par l'indicateur — `Somme` (effectifs,
+volumes), `Moyenne` (taux, ratios, scores, rendements), `Dernière valeur` (stocks) ou `Maximum` —
+déduite de l'unité de mesure à défaut de choix explicite. Sommer un rendement moyen ou moyenner un
+effectif de bénéficiaires sont les deux erreurs que cette règle prévient.
+
+**Indice d'équité de genre.** À partir de la ventilation par sexe : part des femmes, écart à la
+parité en points et appréciation (parité atteinte si l'écart est inférieur à 5 points). Calculé au
+niveau du projet, de chaque indicateur, de chaque zone et de chaque activité.
+
+**Score SMART.** Cinq critères contrôlés automatiquement à partir des données saisies (définition,
+unité et mode de calcul, référence et cible, rattachement au cadre logique, échéance et fréquence),
+la revue manuelle prévalant sur le contrôle automatique. Le score du système est la moyenne des
+scores individuels ; chaque critère non satisfait produit une action correctrice nommée.
+
 L'**indice de santé du projet** est une moyenne pondérée : résultats 45 %, exécution physique 30 %,
 exécution financière 25 %, comparée au pourcentage de temps écoulé.
 
 ### Import / export
 
 - **Import Excel** : reconnaissance souple des onglets et des intitulés de colonnes
-  (Cadre logique, Indicateurs, Cibles, Réalisations, Activités, Budget, Risques, Hypothèses).
-  Un modèle prérempli et commenté est téléchargeable depuis l'application.
+  (Cadre logique, Indicateurs, Cibles, Réalisations, Activités, Budget, Risques, Hypothèses,
+  **Zones**). Les colonnes de désagrégation sont reconnues au format `Catégorie - Modalité`
+  (ex. `Sexe - Femme`, `Groupe cible - Jeune`) ou dans une colonne compacte
+  `Sexe:Femme=210;Sexe:Homme=255`. Un modèle prérempli et commenté est téléchargeable depuis
+  l'application.
 - **Import Word** : analyse des tableaux du document, détection des matrices de cadre logique,
   extraction des niveaux, codes, énoncés, sources de vérification, hypothèses et indicateurs.
 - **Import XLSForm** et **réinjection des données KoboToolbox** : les réponses alimentent
@@ -68,17 +100,20 @@ sepia-erp/
 │   ├── main.py               FastAPI : montage des routeurs, service de l'interface, sonde de santé
 │   ├── config.py             Configuration et référentiels métier
 │   ├── database.py           Moteur SQLAlchemy (SQLite en local, PostgreSQL en production)
-│   ├── models.py             15 entités : projets, cadre logique, indicateurs, cibles,
-│   │                         réalisations, risques, hypothèses, activités, budget,
-│   │                         formulaires, questions, réponses, utilisateurs, audit
+│   ├── models.py             16 entités : projets, cadre logique, indicateurs, cibles,
+│   │                         réalisations (désagrégées et localisées), zones, risques,
+│   │                         hypothèses, activités, budget, formulaires, questions,
+│   │                         réponses, utilisateurs, audit
 │   ├── security.py           PBKDF2 + jetons signés HMAC (bibliothèque standard uniquement)
 │   ├── crud.py               Fabrique de routeurs CRUD génériques et (dé)sérialisation
 │   ├── seed.py               Compte administrateur et projet de démonstration complet
 │   ├── routers/              auth · projects · entities · imports · exports · powerbi
 │   └── services/
-│       ├── analytics.py      Moteur de performance, agrégations, alertes, portefeuille
-│       ├── excel_export.py   9 classeurs Excel mis en forme (XlsxWriter)
-│       ├── word_export.py    7 documents Word (python-docx)
+│       ├── analytics.py      Moteur de performance, règles d'agrégation, équité de genre,
+│       │                     consolidation par zone et par activité, qualité SMART,
+│       │                     analyses périodées, alertes, portefeuille
+│       ├── excel_export.py   12 classeurs Excel mis en forme (XlsxWriter)
+│       ├── word_export.py    8 documents Word (python-docx)
 │       ├── xlsform.py        Génération XLSForm KoboToolbox / ODK
 │       └── importer.py       Analyseurs Excel et Word tolérants
 ├── static/                   Interface web-mobile : HTML + CSS + JavaScript natif,
@@ -150,8 +185,12 @@ Au premier démarrage, la base est créée et un projet de démonstration comple
 | Fiches métadonnées des indicateurs | Word | Une fiche par indicateur avec séries périodiques |
 | **Plan et manuel de suivi-évaluation** | Word | Document maître en 15 chapitres, alimenté par les données du projet |
 | Rapport de performance | Word | Résumé exécutif, indicateurs, alertes, mesures correctrices |
+| **Rapport trimestriel / semestriel / annuel** | Word | Rapport périodé en 8 parties : résumé exécutif, performance de la période, analyse d'équité, consolidation par zone, exécution physique et financière, difficultés et mesures correctrices, qualité du dispositif, bloc de validation |
+| **Analyse d'équité et données désagrégées** | Excel | Ventilation par catégorie, indice d'équité de genre, détail indicateur × modalité, graphique de répartition |
+| **Consolidation par zone d'intervention** | Excel | Bénéficiaires et indicateurs par zone, taux de couverture, collecte par activité, graphique atteints/cible |
+| **Revue qualité SMART** | Excel | Diagnostic critère par critère, score du système, actions correctrices |
 | Tableau de bord | Excel | KPI, graphiques natifs Excel, alertes, détail des indicateurs |
-| Jeu de données Power BI | Excel | Modèle en étoile + dimension calendrier + notice DAX |
+| Jeu de données Power BI | Excel | Modèle en étoile + dimension géographique + faits désagrégés + notice DAX |
 | Questionnaires | Word | Mise en page d'administration papier |
 | Questionnaires | XLSForm | Téléversable dans KoboToolbox / ODK Central |
 | Modèle d'import | Excel | Classeur type commenté, 8 onglets avec exemples |
@@ -170,8 +209,13 @@ Deux méthodes, décrites dans la vue « Power BI » de l'application :
 2. **Classeur Excel structuré** — modèle en étoile prêt à charger, avec notice de création des
    relations et des mesures DAX recommandées.
 
-Tables exposées : `Dim_Projet`, `Dim_Resultat`, `Dim_Indicateur`, `Dim_Calendrier`,
-`Fait_Cible`, `Fait_Realisation`, `Fait_Activite`, `Fait_Budget`, `Fait_Risque`.
+Tables exposées : `Dim_Projet`, `Dim_Resultat`, `Dim_Indicateur`, `Dim_Zone`, `Dim_Calendrier`,
+`Fait_Cible`, `Fait_Realisation`, `Fait_Desagregation`, `Fait_Activite`, `Fait_Budget`,
+`Fait_Risque`.
+
+`Fait_Desagregation` est une table dépliée — une ligne par modalité — directement exploitable dans
+un histogramme empilé segmenté par sexe ou par groupe cible. `Dim_Zone` porte latitude et longitude,
+ce qui permet un visuel cartographique sans traitement supplémentaire.
 
 ---
 
@@ -215,8 +259,16 @@ GET    /api/dashboard/{id}                 Tableau de bord complet
 GET    /api/portefeuille                   Consolidation multi-projets
 GET    /api/logframe/tree/{id}             Arborescence du cadre logique
 GET    /api/indicateurs/suivi/{id}         Grille IPTT
-POST   /api/indicators/{id}/saisie         Saisie d'une réalisation
+GET    /api/saisie/contexte/{id}           Indicateurs, zones et activités pour la saisie
+POST   /api/indicators/{id}/saisie         Saisie d'une réalisation désagrégée et localisée
+POST   /api/actuals/{id}/valider           Validation ou rejet d'une mesure
 POST   /api/projects/{id}/periodes         Génération automatique des cibles périodiques
+GET    /api/analyse/desagregation/{id}     Analyse d'équité (genre, âge, groupe cible)
+GET    /api/analyse/zones/{id}             Consolidation par zone et par activité
+GET    /api/analyse/smart/{id}             Diagnostic SMART du système d'indicateurs
+POST   /api/indicators/{id}/smart          Enregistrement d'une revue SMART
+GET    /api/analyse/periode/{id}?periode=  Photographie d'une période de rapportage
+GET    /api/analyse/periodes/{id}          Périodes existantes et suggérées
 POST   /api/imports/excel/{id}             Import d'un classeur
 POST   /api/imports/word/analyser          Analyse d'un document Word
 POST   /api/imports/kobo/{form_id}         Réinjection de données collectées

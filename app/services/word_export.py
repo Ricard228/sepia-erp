@@ -1075,6 +1075,271 @@ def plan_suivi_evaluation_docx(db: Session, project: Project) -> BytesIO:
 
 
 # ---------------------------------------------------------------------------
+# 7 bis. Rapport périodique de suivi (trimestriel, semestriel, annuel)
+# ---------------------------------------------------------------------------
+LIBELLES_RAPPORT = {
+    "trimestriel": "RAPPORT TRIMESTRIEL DE SUIVI",
+    "semestriel": "RAPPORT SEMESTRIEL D'AVANCEMENT",
+    "annuel": "RAPPORT ANNUEL DE PERFORMANCE",
+}
+
+
+def rapport_periodique_docx(db: Session, project: Project, periode: str,
+                            type_rapport: str = "trimestriel") -> BytesIO:
+    """Rapport de suivi-évaluation portant sur une période de rapportage donnée.
+
+    Structure conforme aux attentes des bailleurs : résumé exécutif, performance
+    des indicateurs sur la période, analyse d'équité (genre et groupe cible),
+    consolidation par zone d'intervention, exécution physique et financière,
+    difficultés et mesures correctrices.
+    """
+    analyse = analytics.analyse_periode(db, project.id, periode)
+    document = Document()
+    section = document.sections[0]
+    section.left_margin = section.right_margin = Cm(2)
+    _en_tete_document(document, project, LIBELLES_RAPPORT.get(type_rapport, "RAPPORT DE SUIVI"),
+                      f"Période de rapportage : {periode}")
+
+    # --- 1. Résumé exécutif
+    titre = document.add_heading("1. Résumé exécutif", level=1)
+    titre.runs[0].font.color.rgb = BLEU
+    par_statut = analyse["par_statut"]
+    atteints = par_statut.get("Atteint", 0) + par_statut.get("En bonne voie", 0)
+    document.add_paragraph(
+        f"Sur la période {periode}, {analyse['total_indicateurs']} indicateurs ont fait l'objet "
+        f"d'une programmation ou d'une mesure, dont {analyse['renseignes']} effectivement "
+        f"renseignés. Le taux moyen d'atteinte des cibles de la période s'établit à "
+        f"{analyse['taux_moyen'] if analyse['taux_moyen'] is not None else '—'} %. "
+        f"{atteints} indicateur(s) sont atteints ou en bonne voie, "
+        f"{par_statut.get('À surveiller', 0)} sont à surveiller et "
+        f"{par_statut.get('Critique', 0)} présentent un écart critique.")
+    document.add_paragraph(
+        f"L'exécution physique des activités atteint {analyse['activites']['avancement_moyen']} % "
+        f"en moyenne, avec {analyse['activites']['achevees']} activité(s) achevée(s) sur "
+        f"{analyse['activites']['total']}. Le taux d'exécution financière de l'exercice "
+        f"{analyse['budget']['annee'] or ''} s'élève à "
+        f"{analyse['budget']['taux_execution']} %, soit "
+        f"{_nombre(analyse['budget']['decaisse'])} {project.currency} décaissés sur "
+        f"{_nombre(analyse['budget']['planifie'])} {project.currency} programmés.")
+    equite = analyse["equite_genre"]
+    if equite:
+        document.add_paragraph(
+            f"Les interventions de la période ont touché {_nombre(equite['total'])} bénéficiaires "
+            f"identifiés, dont {_nombre(equite['femmes'])} femmes, soit "
+            f"{equite['part_femmes']} % de l'effectif ({equite['appreciation'].lower()}).")
+
+    # --- 2. Performance des indicateurs
+    titre = document.add_heading("2. Performance des indicateurs sur la période", level=1)
+    titre.runs[0].font.color.rgb = BLEU
+    table = _tableau(document, ["Code", "Indicateur", "Unité", "Cible période", "Réalisé",
+                                "Taux", "Statut", "Source", "Responsable"],
+                     largeurs=[1.4, 5.5, 1.5, 1.8, 1.6, 1.3, 1.9, 2.5, 2.2])
+    ordre = {"IMPACT": 0, "EFFET": 1, "PRODUIT": 2, "ACTIVITE": 3}
+    for ligne_ind in sorted(analyse["lignes"],
+                            key=lambda l: (ordre.get(l["level"], 9), l["code"] or "")):
+        ligne = table.add_row()
+        valeurs = [ligne_ind["code"], ligne_ind["name"], ligne_ind["unit"],
+                   _nombre(ligne_ind["cible_periode"]), _nombre(ligne_ind["realise_periode"]),
+                   f"{ligne_ind['taux']} %" if ligne_ind["taux"] is not None else "—"]
+        for index, valeur in enumerate(valeurs):
+            _texte_cellule(ligne.cells[index], valeur if valeur not in (None, "") else "—",
+                           centre=index >= 3, taille=8)
+        _ombrer(ligne.cells[6], ligne_ind["couleur"].lstrip("#"))
+        _texte_cellule(ligne.cells[6], ligne_ind["statut"], gras=True, blanc=True,
+                       centre=True, taille=7.5)
+        _texte_cellule(ligne.cells[7], ligne_ind["source"] or "—", taille=8)
+        _texte_cellule(ligne.cells[8], ligne_ind["responsable"] or "—", taille=8)
+
+    # --- 3. Analyse d'équité
+    document.add_page_break()
+    titre = document.add_heading("3. Analyse des données désagrégées", level=1)
+    titre.runs[0].font.color.rgb = BLEU
+    if analyse["desagregation"]:
+        document.add_paragraph(
+            "Les données collectées sur la période sont ventilées selon les catégories de "
+            "désagrégation exigées par le dispositif de suivi. Cette ventilation permet "
+            "d'apprécier l'inclusivité effective des interventions.")
+        for categorie, bloc in sorted(analyse["desagregation"].items()):
+            sous_titre = document.add_heading(f"3.{list(sorted(analyse['desagregation'])).index(categorie) + 1} "
+                                              f"Ventilation par « {categorie} »", level=2)
+            sous_titre.runs[0].font.color.rgb = RGBColor(0x2E, 0x75, 0xB6)
+            table = _tableau(document, ["Modalité", "Effectif", "Part (%)"],
+                             largeurs=[8, 4, 4])
+            total = bloc["total"] or 1
+            for modalite, valeur in sorted(bloc["modalites"].items(), key=lambda x: -x[1]):
+                ligne = table.add_row()
+                _texte_cellule(ligne.cells[0], modalite)
+                _texte_cellule(ligne.cells[1], _nombre(valeur), centre=True)
+                _texte_cellule(ligne.cells[2], f"{round(valeur / total * 100, 1)} %", centre=True)
+            ligne = table.add_row()
+            _ombrer(ligne.cells[0], "DCE6F1")
+            _texte_cellule(ligne.cells[0], "Total", gras=True)
+            _ombrer(ligne.cells[1], "DCE6F1")
+            _texte_cellule(ligne.cells[1], _nombre(bloc["total"]), gras=True, centre=True)
+            _ombrer(ligne.cells[2], "DCE6F1")
+            _texte_cellule(ligne.cells[2], "100 %", gras=True, centre=True)
+        if equite:
+            p = document.add_paragraph()
+            run = p.add_run(
+                f"Indice d'équité de genre : les femmes représentent {equite['part_femmes']} % "
+                f"des bénéficiaires, soit un écart de {equite['ecart_parite']:+} point(s) par "
+                f"rapport à la parité. Appréciation : {equite['appreciation'].lower()}.")
+            run.bold = True
+            run.font.size = Pt(10)
+    else:
+        document.add_paragraph(
+            "Aucune donnée désagrégée n'a été enregistrée sur la période. Il est recommandé de "
+            "renseigner systématiquement la ventilation par sexe et par groupe cible lors de la "
+            "saisie des réalisations, conformément au dispositif de suivi.")
+
+    # --- 4. Consolidation par zone
+    titre = document.add_heading("4. Consolidation par zone d'intervention", level=1)
+    titre.runs[0].font.color.rgb = BLEU
+    zones = analyse["zones"]
+    zones_actives = [z for z in zones["zones"] if z["nb_mesures"]]
+    if zones_actives:
+        document.add_paragraph(
+            f"{zones['zones_couvertes']} zone(s) sur {zones['nb_zones']} ont fait l'objet d'une "
+            f"collecte sur la période, soit un taux de couverture géographique de "
+            f"{zones['taux_couverture_zones']} %."
+            + (f" {zones['mesures_non_localisees']} mesure(s) n'ont pas été rattachées à une zone."
+               if zones["mesures_non_localisees"] else ""))
+        table = _tableau(document, ["Code", "Zone", "Niveau", "Bénéficiaires atteints",
+                                    "Cible", "Couverture", "Part des femmes", "Mesures"],
+                         largeurs=[1.5, 4, 2.2, 2.6, 2, 2, 2.2, 1.5])
+        for zone in zones_actives:
+            ligne = table.add_row()
+            equite_zone = zone.get("equite_genre") or {}
+            valeurs = [zone["code"], zone["nom"], zone["niveau"],
+                       _nombre(zone["beneficiaires_atteints"]),
+                       _nombre(zone["cible_beneficiaires"]),
+                       f"{zone['taux_couverture']} %" if zone["taux_couverture"] is not None else "—",
+                       f"{equite_zone['part_femmes']} %" if equite_zone else "—",
+                       zone["nb_mesures"]]
+            for index, valeur in enumerate(valeurs):
+                _texte_cellule(ligne.cells[index], valeur if valeur not in (None, "") else "—",
+                               centre=index >= 3, taille=8)
+        document.add_paragraph()
+        p = document.add_paragraph()
+        run = p.add_run("Détail des réalisations par zone et par indicateur")
+        run.bold = True
+        run.font.size = Pt(10)
+        table = _tableau(document, ["Zone", "Indicateur", "Unité", "Valeur cumulée"],
+                         largeurs=[4, 8, 2, 3])
+        for zone in zones_actives:
+            for indicateur in zone["indicateurs"]:
+                ligne = table.add_row()
+                for index, valeur in enumerate([zone["nom"], indicateur["libelle"],
+                                                indicateur["unite"] or "—",
+                                                _nombre(indicateur["valeur"])]):
+                    _texte_cellule(ligne.cells[index], valeur, centre=index == 3, taille=8)
+    else:
+        document.add_paragraph(
+            "Aucune mesure n'a été rattachée à une zone d'intervention sur la période. Le "
+            "renseignement de la zone lors de la saisie permet de produire cette consolidation "
+            "et d'apprécier l'équilibre géographique des interventions.")
+
+    # --- 5. Exécution physique et financière
+    document.add_page_break()
+    titre = document.add_heading("5. Exécution physique et financière", level=1)
+    titre.runs[0].font.color.rgb = BLEU
+    activites_mesurees = analytics.consolidation_par_activite(db, project.id)
+    table = _tableau(document, ["Rubrique", "Valeur"], largeurs=[9, 6])
+    for libelle, valeur in [
+        ("Activités programmées", analyse["activites"]["total"]),
+        ("Activités achevées", analyse["activites"]["achevees"]),
+        ("Avancement physique moyen", f"{analyse['activites']['avancement_moyen']} %"),
+        (f"Budget programmé ({project.currency})", _nombre(analyse["budget"]["planifie"])),
+        (f"Montant décaissé ({project.currency})", _nombre(analyse["budget"]["decaisse"])),
+        ("Taux d'exécution financière", f"{analyse['budget']['taux_execution']} %"),
+    ]:
+        ligne = table.add_row()
+        _texte_cellule(ligne.cells[0], libelle, gras=True)
+        _texte_cellule(ligne.cells[1], valeur, centre=True)
+    if activites_mesurees:
+        p = document.add_paragraph()
+        run = p.add_run("Données collectées par activité")
+        run.bold = True
+        run.font.size = Pt(10)
+        table = _tableau(document, ["Code", "Activité", "Avancement", "Indicateurs renseignés",
+                                    "Part des femmes"], largeurs=[1.5, 6, 2, 5, 2.5])
+        for activite in activites_mesurees:
+            ligne = table.add_row()
+            equite_act = activite.get("equite_genre") or {}
+            valeurs = [activite["code"], activite["libelle"], f"{activite['avancement']} %",
+                       ", ".join(f"{i['code']} = {_nombre(i['valeur'])}"
+                                 for i in activite["indicateurs"]) or "—",
+                       f"{equite_act['part_femmes']} %" if equite_act else "—"]
+            for index, valeur in enumerate(valeurs):
+                _texte_cellule(ligne.cells[index], valeur if valeur not in (None, "") else "—",
+                               centre=index in (2, 4), taille=8)
+
+    # --- 6. Difficultés et mesures correctrices
+    titre = document.add_heading("6. Difficultés rencontrées et mesures correctrices", level=1)
+    titre.runs[0].font.color.rgb = BLEU
+    if analyse["alertes"]:
+        document.add_paragraph(
+            "Les écarts significatifs constatés sur la période appellent l'analyse causale et les "
+            "mesures correctrices consignées dans le tableau ci-après, à compléter lors de la "
+            "réunion de revue de performance.")
+        table = _tableau(document, ["Indicateur", "Écart constaté", "Cause identifiée",
+                                    "Mesure corrective", "Responsable", "Échéance"],
+                         largeurs=[4.5, 2.5, 3.5, 4, 2.5, 2])
+        for ligne_ind in analyse["alertes"]:
+            ligne = table.add_row()
+            _texte_cellule(ligne.cells[0], f"{ligne_ind['code'] or ''} {ligne_ind['name']}",
+                           taille=8)
+            _texte_cellule(ligne.cells[1],
+                           f"{ligne_ind['taux']} % de la cible" if ligne_ind["taux"] is not None
+                           else "Non renseigné", centre=True, taille=8)
+            for index in (2, 3, 4, 5):
+                _texte_cellule(ligne.cells[index], "", taille=8)
+    else:
+        document.add_paragraph("Aucun écart significatif n'a été constaté sur la période.")
+
+    # --- 7. Qualité des données
+    titre = document.add_heading("7. Qualité du dispositif de suivi", level=1)
+    titre.runs[0].font.color.rgb = BLEU
+    qualite = analytics.synthese_qualite_smart(db, project.id)
+    desagregation = analytics.synthese_desagregation(db, project.id, periode)
+    document.add_paragraph(
+        f"Le score de qualité SMART du système d'indicateurs s'établit à "
+        f"{qualite['score_systeme']} % ({qualite['appreciation'].lower()}) : "
+        f"{qualite['conformes']} indicateur(s) pleinement conformes et "
+        f"{qualite['a_reprendre']} nécessitant une reprise. "
+        + (f"Le taux de désagrégation effective des données atteint "
+           f"{desagregation['taux_desagregation']} %."
+           if desagregation["taux_desagregation"] is not None else ""))
+    if qualite["a_reprendre"]:
+        table = _tableau(document, ["Indicateur", "Score", "Actions correctrices recommandées"],
+                         largeurs=[5, 1.8, 10])
+        for ligne_ind in [l for l in qualite["lignes"] if l["score"] < 60][:12]:
+            ligne = table.add_row()
+            _texte_cellule(ligne.cells[0], f"{ligne_ind['code'] or ''} {ligne_ind['name']}",
+                           taille=8)
+            _texte_cellule(ligne.cells[1], f"{ligne_ind['score']} %", centre=True, taille=8)
+            _texte_cellule(ligne.cells[2], " • ".join(ligne_ind["recommandations"]), taille=8)
+
+    # --- 8. Validation
+    titre = document.add_heading("8. Validation du rapport", level=1)
+    titre.runs[0].font.color.rgb = BLEU
+    table = _tableau(document, ["Fonction", "Nom et prénoms", "Date", "Signature"],
+                     largeurs=[4.5, 5, 3, 4])
+    for fonction in ["Rédigé par — Responsable suivi-évaluation",
+                     "Vérifié par — Coordonnateur du projet",
+                     "Approuvé par — Président du comité de pilotage"]:
+        ligne = table.add_row()
+        _texte_cellule(ligne.cells[0], fonction, gras=True)
+        for index in (1, 2, 3):
+            _texte_cellule(ligne.cells[index], "")
+        ligne.cells[0].paragraphs[0].paragraph_format.space_after = Pt(10)
+
+    _pied_de_page(document, f"{project.code} — {LIBELLES_RAPPORT.get(type_rapport, 'Rapport')} — "
+                            f"{periode} — Généré par {APP_NAME}")
+    return _sauver(document)
+
+
+# ---------------------------------------------------------------------------
 # 7. Rapport périodique de performance
 # ---------------------------------------------------------------------------
 def rapport_performance_docx(db: Session, project: Project, periode: str = "") -> BytesIO:

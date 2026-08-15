@@ -14,7 +14,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..models import (Activity, BudgetLine, Indicator, LogframeElement, Project, Risk, User)
+from ..models import (Activity, BudgetLine, Indicator, LogframeElement, Project, Risk, User, Zone)
 from ..security import current_user, decode_token
 from ..services import analytics
 
@@ -35,7 +35,10 @@ def _autoriser(token: Optional[str], db: Session) -> User:
 
 def _tables(db: Session, project: Project) -> Dict[str, List[Dict[str, Any]]]:
     indicateurs = db.query(Indicator).filter(Indicator.project_id == project.id).all()
-    faits_realisation, faits_cible = [], []
+    zones = {z.id: z for z in db.query(Zone).filter(Zone.project_id == project.id).all()}
+    activites = {a.id: a for a in db.query(Activity).filter(
+        Activity.project_id == project.id).all()}
+    faits_realisation, faits_cible, faits_desagregation = [], [], []
     for i in indicateurs:
         for t in i.targets:
             faits_cible.append({"CibleID": t.id, "IndicateurID": i.id, "CodeIndicateur": i.code,
@@ -43,14 +46,35 @@ def _tables(db: Session, project: Project) -> Dict[str, List[Dict[str, Any]]]:
                                 "ValeurCible": t.target_value})
         for a in i.actuals:
             taux = analytics.taux_realisation(i.baseline_value, i.target_value, a.value, i.direction)
+            zone = zones.get(a.zone_id)
+            activite = activites.get(a.activity_id)
             faits_realisation.append({
                 "RealisationID": a.id, "IndicateurID": i.id, "CodeIndicateur": i.code,
                 "Periode": a.period_label, "Annee": a.year,
                 "DateReference": a.reference_date.isoformat() if a.reference_date else None,
                 "ValeurRealisee": a.value, "Source": a.source,
+                "ZoneID": a.zone_id, "Zone": zone.name if zone else None,
+                "ActiviteID": a.activity_id, "Activite": activite.name if activite else None,
                 "Validation": a.validation_status, "TauxRealisation": taux,
                 "StatutPerformance": analytics.statut_performance(taux)})
+            # Table de faits dépliée : une ligne par modalité, exploitable telle
+            # quelle dans un graphique Power BI segmenté par sexe ou groupe cible.
+            for categorie, modalites in (a.disaggregated_values or {}).items():
+                if not isinstance(modalites, dict):
+                    continue
+                for modalite, valeur in modalites.items():
+                    faits_desagregation.append({
+                        "RealisationID": a.id, "IndicateurID": i.id, "CodeIndicateur": i.code,
+                        "Periode": a.period_label, "Annee": a.year,
+                        "ZoneID": a.zone_id, "Zone": zone.name if zone else None,
+                        "Categorie": categorie, "Modalite": modalite, "Valeur": valeur})
     return {
+        "Dim_Zone": [{
+            "ZoneID": z.id, "ProjetID": z.project_id, "ParentID": z.parent_id, "Code": z.code,
+            "Zone": z.name, "Niveau": z.level, "Population": z.population,
+            "CibleBeneficiaires": z.beneficiaries_target, "Latitude": z.latitude,
+            "Longitude": z.longitude, "Responsable": z.responsible} for z in zones.values()],
+        "Fait_Desagregation": faits_desagregation,
         "Dim_Projet": [{
             "ProjetID": project.id, "Code": project.code, "Titre": project.title,
             "Acronyme": project.acronym, "Secteur": project.sector, "Pays": project.country,

@@ -10,8 +10,9 @@ from docx import Document
 from openpyxl import load_workbook
 from sqlalchemy.orm import Session
 
+from ..config import CATEGORIES_DESAGREGATION, MODALITES_DESAGREGATION
 from ..models import (Activity, Assumption, BudgetLine, Indicator, IndicatorActual,
-                      IndicatorTarget, LogframeElement, Project, Risk)
+                      IndicatorTarget, LogframeElement, Project, Risk, Zone)
 
 
 # ---------------------------------------------------------------------------
@@ -177,6 +178,21 @@ CORRESPONDANCES = {
         "source": ["source"],
         "collected_by": ["collecte par", "agent", "enqueteur"],
         "validation_status": ["statut", "validation"],
+        "zone": ["zone", "zone d intervention", "localite", "site"],
+        "activity": ["code activite", "activite"],
+        "desagregation": ["desagregation", "ventilation", "detail desagrege"],
+    },
+    "zones": {
+        "code": ["code"],
+        "name": ["zone", "nom de la zone", "libelle", "nom", "intitule"],
+        "level": ["niveau", "type de zone"],
+        "parent": ["zone parente", "code parent", "parent", "rattachement"],
+        "population": ["population"],
+        "beneficiaries_target": ["cible beneficiaires", "beneficiaires cibles",
+                                 "cible de beneficiaires", "beneficiaires"],
+        "latitude": ["latitude"],
+        "longitude": ["longitude"],
+        "responsible": ["responsable"],
     },
     "activites": {
         "code": ["code", "code activite"],
@@ -246,7 +262,67 @@ ALIAS_FEUILLES = {
     "budget": ["budget", "ptba", "budget detaille", "lignes budgetaires", "cout"],
     "risques": ["risques", "risque", "registre des risques", "matrice des risques"],
     "hypotheses": ["hypotheses", "hypothese", "conditions critiques"],
+    "zones": ["zones", "zone", "zones d intervention", "localites", "sites",
+              "zone d intervention"],
 }
+
+
+# ---------------------------------------------------------------------------
+# Désagrégation : lecture des colonnes « Catégorie - Modalité »
+# ---------------------------------------------------------------------------
+def _colonnes_desagregation(entetes: List[Any]) -> Dict[int, Tuple[str, str]]:
+    """Repère les colonnes du type « Sexe - Femme » ou « Groupe cible : Jeune ».
+
+    Retourne {indice de colonne: (catégorie, modalité)}. La catégorie est
+    rapprochée du référentiel afin de conserver l'orthographe canonique.
+    """
+    canoniques = {normaliser(c): c for c in CATEGORIES_DESAGREGATION}
+    resultat: Dict[int, Tuple[str, str]] = {}
+    for index, entete in enumerate(entetes):
+        if not isinstance(entete, str):
+            continue
+        for separateur in (" - ", " – ", " : ", ":", "|", " / "):
+            if separateur not in entete:
+                continue
+            gauche, droite = entete.split(separateur, 1)
+            categorie = canoniques.get(normaliser(gauche))
+            if categorie and droite.strip():
+                modalite = droite.strip()
+                referentiel = MODALITES_DESAGREGATION.get(categorie, [])
+                correspondance = next(
+                    (m for m in referentiel if normaliser(m) == normaliser(modalite)), None)
+                resultat[index] = (categorie, correspondance or modalite)
+                break
+    return resultat
+
+
+def _lire_desagregation(ligne: Tuple, colonnes_desagregation: Dict[int, Tuple[str, str]],
+                        texte_libre: Any) -> Dict[str, Dict[str, float]]:
+    """Construit le dictionnaire de valeurs désagrégées d'une ligne.
+
+    Deux écritures sont acceptées : une colonne par modalité, ou une colonne
+    unique au format « Sexe:Femme=120;Sexe:Homme=95 ».
+    """
+    valeurs: Dict[str, Dict[str, float]] = {}
+    for index, (categorie, modalite) in colonnes_desagregation.items():
+        if index >= len(ligne):
+            continue
+        nombre = _valeur_numerique(ligne[index])
+        if nombre is None:
+            continue
+        valeurs.setdefault(categorie, {})[modalite] = nombre
+    if texte_libre:
+        canoniques = {normaliser(c): c for c in CATEGORIES_DESAGREGATION}
+        for morceau in re.split(r"[;\n]+", str(texte_libre)):
+            correspondance = re.match(r"\s*([^:=]+)\s*:\s*([^=]+)\s*=\s*(.+)\s*$", morceau)
+            if not correspondance:
+                continue
+            categorie = canoniques.get(normaliser(correspondance.group(1)),
+                                       correspondance.group(1).strip())
+            nombre = _valeur_numerique(correspondance.group(3))
+            if nombre is not None:
+                valeurs.setdefault(categorie, {})[correspondance.group(2).strip()] = nombre
+    return valeurs
 
 
 def _trouver_feuille(classeur, cle: str):
@@ -290,7 +366,7 @@ def importer_excel(db: Session, contenu: bytes, project: Project,
             db.query(modele).filter(modele.indicator_id.in_(
                 db.query(Indicator.id).filter(Indicator.project_id == project.id))).delete(
                 synchronize_session=False)
-        for modele in (BudgetLine, Activity, Indicator, Assumption, Risk, LogframeElement):
+        for modele in (BudgetLine, Activity, Indicator, Assumption, Risk, LogframeElement, Zone):
             db.query(modele).filter(modele.project_id == project.id).delete(synchronize_session=False)
         db.flush()
 
@@ -396,45 +472,61 @@ def importer_excel(db: Session, contenu: bytes, project: Project,
         db.flush()
         compter("indicateurs", nombre)
 
-    # --- 3. Cibles et réalisations ---------------------------------------
-    for cle, modele, champ_valeur in (("cibles", IndicatorTarget, "target_value"),
-                                      ("realisations", IndicatorActual, "value")):
-        feuille = _trouver_feuille(classeur, cle)
-        if feuille is None:
-            continue
+    # --- 2 bis. Zones d'intervention -------------------------------------
+    zones_par_code: Dict[str, Zone] = {}
+    zones_par_nom: Dict[str, Zone] = {}
+    for zone in db.query(Zone).filter(Zone.project_id == project.id).all():
+        if zone.code:
+            zones_par_code[str(zone.code)] = zone
+        zones_par_nom[normaliser(zone.name)] = zone
+    feuille = _trouver_feuille(classeur, "zones")
+    if feuille is not None:
         entetes, corps = _lignes_utiles(feuille)
-        colonnes = _index_colonnes(entetes, CORRESPONDANCES[cle])
+        colonnes = _index_colonnes(entetes, CORRESPONDANCES["zones"])
         rapport["feuilles_traitees"].append(feuille.title)
         nombre = 0
-        for ligne in corps:
-            code = _cellule(ligne, colonnes, "indicator")
-            indicateur = indicateurs_par_code.get(str(code)) if code else None
-            valeur = _valeur_numerique(_cellule(ligne, colonnes, champ_valeur))
-            periode = _cellule(ligne, colonnes, "period_label")
-            if indicateur is None or valeur is None or not periode:
-                if code and indicateur is None:
-                    rapport["avertissements"].append(
-                        f"{cle.capitalize()} : indicateur « {code} » introuvable.")
+        en_attente_zones: List[Tuple[Zone, str]] = []
+        for position, ligne in enumerate(corps):
+            nom = _cellule(ligne, colonnes, "name")
+            if not nom:
                 continue
-            objet = modele(indicator_id=indicateur.id, period_label=str(periode))
-            annee = _valeur_numerique(_cellule(ligne, colonnes, "year"))
-            objet.year = int(annee) if annee else None
-            if cle == "cibles":
-                objet.target_value = valeur
-                objet.period_start = _valeur_date(_cellule(ligne, colonnes, "period_start"))
-                objet.period_end = _valeur_date(_cellule(ligne, colonnes, "period_end"))
+            code = _cellule(ligne, colonnes, "code")
+            zone = zones_par_code.get(str(code)) if code else zones_par_nom.get(normaliser(nom))
+            if zone is None:
+                zone = Zone(project_id=project.id)
+                db.add(zone)
+                nombre += 1
+            zone.code = str(code) if code else None
+            zone.name = str(nom)
+            zone.level = _cellule(ligne, colonnes, "level") or "Région"
+            population = _valeur_numerique(_cellule(ligne, colonnes, "population"))
+            zone.population = int(population) if population else None
+            cible = _valeur_numerique(_cellule(ligne, colonnes, "beneficiaries_target"))
+            zone.beneficiaries_target = int(cible) if cible else None
+            zone.latitude = _valeur_numerique(_cellule(ligne, colonnes, "latitude"))
+            zone.longitude = _valeur_numerique(_cellule(ligne, colonnes, "longitude"))
+            zone.responsible = _cellule(ligne, colonnes, "responsible")
+            zone.order_index = position
+            db.flush()
+            if code:
+                zones_par_code[str(code)] = zone
+            zones_par_nom[normaliser(nom)] = zone
+            parent = _cellule(ligne, colonnes, "parent")
+            if parent:
+                en_attente_zones.append((zone, str(parent)))
+        for zone, code_parent in en_attente_zones:
+            parent = zones_par_code.get(code_parent) or zones_par_nom.get(normaliser(code_parent))
+            if parent is not None and parent.id != zone.id:
+                zone.parent_id = parent.id
             else:
-                objet.value = valeur
-                objet.reference_date = _valeur_date(_cellule(ligne, colonnes, "reference_date"))
-                objet.source = _cellule(ligne, colonnes, "source")
-                objet.collected_by = _cellule(ligne, colonnes, "collected_by")
-                objet.validation_status = _cellule(ligne, colonnes, "validation_status") or "Validé"
-            db.add(objet)
-            nombre += 1
+                rapport["avertissements"].append(
+                    f"Zones : zone parente « {code_parent} » introuvable pour « {zone.name} ».")
         db.flush()
-        compter(cle, nombre)
+        compter("zones", nombre)
 
-    # --- 4. Activités -----------------------------------------------------
+    # --- 2 ter. Activités -------------------------------------------------
+    # Importées avant les réalisations : celles-ci peuvent référencer l'activité
+    # qui les a produites, ce qui permet la consolidation par activité.
     activites_par_code: Dict[str, Activity] = {
         a.code: a for a in db.query(Activity).filter(Activity.project_id == project.id).all()
         if a.code}
@@ -479,7 +571,67 @@ def importer_excel(db: Session, contenu: bytes, project: Project,
         db.flush()
         compter("activites", nombre)
 
-    # --- 5. Budget --------------------------------------------------------
+    # --- 3. Cibles et réalisations ---------------------------------------
+    for cle, modele, champ_valeur in (("cibles", IndicatorTarget, "target_value"),
+                                      ("realisations", IndicatorActual, "value")):
+        feuille = _trouver_feuille(classeur, cle)
+        if feuille is None:
+            continue
+        entetes, corps = _lignes_utiles(feuille)
+        colonnes = _index_colonnes(entetes, CORRESPONDANCES[cle])
+        colonnes_desagregation = _colonnes_desagregation(entetes) if cle == "realisations" else {}
+        rapport["feuilles_traitees"].append(feuille.title)
+        nombre = 0
+        for ligne in corps:
+            code = _cellule(ligne, colonnes, "indicator")
+            indicateur = indicateurs_par_code.get(str(code)) if code else None
+            valeur = _valeur_numerique(_cellule(ligne, colonnes, champ_valeur))
+            periode = _cellule(ligne, colonnes, "period_label")
+            if indicateur is None or valeur is None or not periode:
+                if code and indicateur is None:
+                    rapport["avertissements"].append(
+                        f"{cle.capitalize()} : indicateur « {code} » introuvable.")
+                continue
+            objet = modele(indicator_id=indicateur.id, period_label=str(periode))
+            annee = _valeur_numerique(_cellule(ligne, colonnes, "year"))
+            objet.year = int(annee) if annee else None
+            if cle == "cibles":
+                objet.target_value = valeur
+                objet.period_start = _valeur_date(_cellule(ligne, colonnes, "period_start"))
+                objet.period_end = _valeur_date(_cellule(ligne, colonnes, "period_end"))
+            else:
+                objet.value = valeur
+                objet.reference_date = _valeur_date(_cellule(ligne, colonnes, "reference_date"))
+                objet.source = _cellule(ligne, colonnes, "source")
+                objet.collected_by = _cellule(ligne, colonnes, "collected_by")
+                objet.validation_status = _cellule(ligne, colonnes, "validation_status") or "Validé"
+                nom_zone = _cellule(ligne, colonnes, "zone")
+                if nom_zone:
+                    zone = zones_par_code.get(str(nom_zone)) or \
+                        zones_par_nom.get(normaliser(nom_zone))
+                    if zone is not None:
+                        objet.zone_id = zone.id
+                    else:
+                        rapport["avertissements"].append(
+                            f"Réalisations : zone « {nom_zone} » introuvable ; la mesure est "
+                            f"enregistrée sans localisation.")
+                code_activite = _cellule(ligne, colonnes, "activity")
+                if code_activite:
+                    activite = db.query(Activity).filter(
+                        Activity.project_id == project.id,
+                        Activity.code == str(code_activite)).first()
+                    if activite is not None:
+                        objet.activity_id = activite.id
+                desagregation = _lire_desagregation(
+                    ligne, colonnes_desagregation, _cellule(ligne, colonnes, "desagregation"))
+                if desagregation:
+                    objet.disaggregated_values = desagregation
+            db.add(objet)
+            nombre += 1
+        db.flush()
+        compter(cle, nombre)
+
+    # --- 4. Budget --------------------------------------------------------
     feuille = _trouver_feuille(classeur, "budget")
     if feuille is not None:
         entetes, corps = _lignes_utiles(feuille)

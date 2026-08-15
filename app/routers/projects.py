@@ -4,8 +4,10 @@ from typing import Any, Dict, List
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
-from ..config import (CATEGORIES_RISQUE, FREQUENCES, LIBELLES_NIVEAUX, NIVEAUX_CADRE_LOGIQUE,
-                      STATUTS_PROJET, TYPES_INDICATEUR, TYPES_QUESTION)
+from ..config import (CATEGORIES_DESAGREGATION, CATEGORIES_RISQUE, CRITERES_SMART, FREQUENCES,
+                      LIBELLES_NIVEAUX, MODALITES_DESAGREGATION, NIVEAUX_CADRE_LOGIQUE,
+                      NIVEAUX_ZONE, STATUTS_PROJET, TYPES_INDICATEUR, TYPES_QUESTION,
+                      TYPES_RAPPORT)
 from ..crud import apply_payload, log_action, serialize, serialize_many
 from ..database import get_db
 from ..models import (Activity, Assumption, AuditLog, BudgetLine, Form, FormQuestion, Indicator,
@@ -213,11 +215,13 @@ def tableau_suivi_indicateurs(project_id: int, db: Session = Depends(get_db),
     lignes = []
     for ind in indicateurs:
         cibles = {t.period_label: t.target_value for t in ind.targets}
-        reels = {a.period_label: a.value for a in ind.actuals}
+        mesurees = {a.period_label for a in ind.actuals if a.value is not None}
         lignes.append({
             **analytics.indicator_performance(ind),
             "cibles": {p: cibles.get(p) for p in periodes},
-            "realisations": {p: reels.get(p) for p in periodes},
+            # Valeur consolidée sur l'ensemble des zones ayant collecté la période.
+            "realisations": {p: (analytics.valeur_de_periode(ind, p) if p in mesurees else None)
+                             for p in periodes},
         })
     ordre = {"IMPACT": 0, "EFFET": 1, "PRODUIT": 2, "ACTIVITE": 3}
     lignes.sort(key=lambda l: (ordre.get(l["level"], 9), l["code"] or ""))
@@ -236,8 +240,11 @@ def referentiels(user: User = Depends(current_user)):
         "types_question": TYPES_QUESTION,
         "unites": ["Nombre", "%", "Ratio", "Score", "Indice", "Tonne", "Hectare", "km",
                    "FCFA", "USD", "EUR", "Jour", "Mois", "t/ha", "kg", "Litre"],
-        "desagregations": ["Sexe", "Âge", "Région", "Milieu (urbain/rural)", "Handicap",
-                           "Statut socio-économique", "Type de bénéficiaire", "Commune"],
+        "desagregations": CATEGORIES_DESAGREGATION,
+        "modalites_desagregation": MODALITES_DESAGREGATION,
+        "niveaux_zone": NIVEAUX_ZONE,
+        "criteres_smart": CRITERES_SMART,
+        "types_rapport": TYPES_RAPPORT,
         "statuts_activite": ["Planifiée", "En cours", "Achevée", "Retardée", "Annulée"],
         "statuts_risque": ["Ouvert", "Maîtrisé", "Clos", "Survenu"],
         "categories_budget": ["Personnel", "Équipements", "Formations", "Prestations",

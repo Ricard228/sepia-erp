@@ -226,7 +226,7 @@ def construire(chemin_sortie: str) -> str:
         ("2.", "Périmètre fonctionnel"),
         ("3.", "Architecture générale de la solution"),
         ("4.", "Modèle de données"),
-        ("5.", "Description détaillée des modules"),
+        ("5.", "Description détaillée des quinze modules"),
         ("6.", "Méthodologie de suivi-évaluation intégrée"),
         ("7.", "Import de données : Excel, Word, XLSForm, KoboToolbox"),
         ("8.", "Livrables générés automatiquement"),
@@ -327,26 +327,40 @@ def construire(chemin_sortie: str) -> str:
          "la formulation du cadre logique jusqu'à la production des rapports d'évaluation. Le "
          "tableau ci-après récapitule les quatorze modules fonctionnels.")
     tableau(document, ["Domaine", "Module", "Objet"],
-            [["Pilotage", "Tableau de bord", "Indicateurs clés, indice de santé, graphiques, "
-                                             "alertes priorisées"],
+            [["Pilotage", "Tableau de bord", "Indicateurs clés, indice de santé, équité, "
+                                             "couverture territoriale, qualité, alertes priorisées"],
              ["Pilotage", "Portefeuille", "Vue consolidée multi-projets, comparaison, duplication"],
              ["Pilotage", "Fiche du projet", "Identification, ancrage institutionnel, théorie du "
                                              "changement, alignement stratégique"],
              ["Planification", "Cadre logique", "Chaîne de résultats hiérarchisée, sources de "
                                                 "vérification, hypothèses"],
-             ["Planification", "Indicateurs", "Fiches métadonnées complètes, cibles, contrôle SMART"],
+             ["Planification", "Indicateurs", "Fiches métadonnées complètes, cibles, règle "
+                                              "d'agrégation, désagrégations exigées"],
+             ["Planification", "Zones d'intervention", "Découpage géographique hiérarchisé, "
+                                                       "population, cible de bénéficiaires, "
+                                                       "coordonnées, responsable"],
              ["Planification", "Chronogramme", "Diagramme de Gantt, jalons, dépendances, retards"],
              ["Planification", "PTBA et budget", "Lignes budgétaires, ventilation trimestrielle, "
                                                  "engagements et décaissements"],
-             ["Suivi-évaluation", "Cadre de suivi (IPTT)", "Grille cibles/réalisations par "
-                                                           "période, saisie directe"],
-             ["Suivi-évaluation", "Risques et hypothèses", "Registre coté, matrice 5×5, "
-                                                           "atténuation, contingence"],
-             ["Suivi-évaluation", "Fiches et questionnaires", "Conception d'instruments, export "
-                                                              "Word et XLSForm"],
+             ["Collecte et suivi", "Saisie des réalisations", "Saisie temps réel : période, zone, "
+                                                              "activité source, ventilation par "
+                                                              "sexe, âge et groupe cible"],
+             ["Collecte et suivi", "Cadre de suivi (IPTT)", "Grille cibles/réalisations par "
+                                                            "période, saisie directe"],
+             ["Collecte et suivi", "Fiches et questionnaires", "Conception d'instruments, export "
+                                                               "Word et XLSForm"],
+             ["Analyse", "Équité et désagrégation", "Ventilation consolidée, indice d'équité de "
+                                                    "genre, écart à la parité, désagrégations "
+                                                    "manquantes"],
+             ["Analyse", "Qualité des indicateurs", "Diagnostic SMART, score du système, actions "
+                                                    "correctrices"],
+             ["Analyse", "Risques et hypothèses", "Registre coté, matrice 5×5, atténuation, "
+                                                  "contingence"],
+             ["Rapportage", "Rapports périodiques", "Rapports trimestriels, semestriels et "
+                                                    "annuels, avec aperçu à l'écran"],
+             ["Rapportage", "Livrables", "Génération des vingt-deux documents du dispositif"],
+             ["Rapportage", "Power BI", "Flux temps réel, modèle en étoile, faits désagrégés"],
              ["Données", "Importer", "Chargement depuis Excel, Word, XLSForm, exports Kobo"],
-             ["Données", "Livrables", "Génération des seize documents du dispositif"],
-             ["Données", "Power BI", "Flux temps réel et modèle en étoile"],
              ["Système", "Administration", "Comptes, rôles, journal d'audit"]],
             largeurs=[3.2, 4.3, 9])
 
@@ -430,10 +444,11 @@ def construire(chemin_sortie: str) -> str:
     # ------------------------------------------------- 4. Modèle de données
     titre1(document, "4. Modèle de données")
     para(document,
-         "Le modèle comprend quinze entités. Sa structure reflète directement la logique du "
-         "suivi-évaluation : un projet porte une chaîne de résultats, chaque résultat porte des "
-         "indicateurs, chaque indicateur porte des cibles périodiques et des réalisations "
-         "mesurées.")
+         "Le modèle comprend seize entités. Sa structure reflète directement la logique du "
+         "suivi-évaluation : un projet porte une chaîne de résultats et un découpage territorial ; "
+         "chaque résultat porte des indicateurs ; chaque indicateur porte des cibles périodiques et "
+         "des réalisations mesurées, elles-mêmes localisées dans une zone, rattachées à l'activité "
+         "qui les a produites et ventilées par catégorie de bénéficiaires.")
     tableau(document, ["Entité", "Rôle", "Principaux attributs"],
             [["Project", "Projet ou programme",
               "code, intitulé, secteur, bailleur, agence d'exécution, dates, budget, devise, "
@@ -448,8 +463,12 @@ def construire(chemin_sortie: str) -> str:
              ["IndicatorTarget", "Cible périodique (jalon)",
               "période, année, dates de début et de fin, valeur cible"],
              ["IndicatorActual", "Réalisation mesurée",
-              "période, date de référence, valeur, valeurs désagrégées, source, agent "
-              "collecteur, statut de validation"],
+              "période, date de référence, valeur, valeurs désagrégées par catégorie et modalité, "
+              "zone d'intervention, activité source, source, agent collecteur, statut et auteur "
+              "de la validation"],
+             ["Zone", "Zone d'intervention",
+              "code, nom, niveau administratif, zone parente, population, cible de bénéficiaires, "
+              "latitude, longitude, responsable"],
              ["Risk", "Risque du registre",
               "code, catégorie, énoncé, cause, conséquence, probabilité, impact, atténuation, "
               "contingence, risque résiduel, porteur, statut, date de revue"],
@@ -485,15 +504,20 @@ def construire(chemin_sortie: str) -> str:
         "La suppression d'un projet entraîne la suppression explicite et ordonnée de toutes ses "
         "dépendances, y compris sous SQLite où les contraintes de cascade ne sont pas appliquées "
         "par défaut.",
+        "Une réalisation est identifiée par le triplet indicateur / période / zone : deux zones "
+        "peuvent déclarer une mesure sur la même période sans écrasement mutuel, et la "
+        "consolidation s'opère au moment du calcul, non au moment de la saisie.",
         "Toute création, modification ou suppression est inscrite au journal d'audit avec "
         "l'identité de son auteur.",
+        "Les colonnes ajoutées lors d'une mise à jour de l'application sont créées "
+        "automatiquement au redémarrage, sans migration manuelle ni perte de données.",
     ]:
         puce(document, texte)
 
     document.add_page_break()
 
     # ------------------------------------------------- 5. Modules
-    titre1(document, "5. Description détaillée des modules")
+    titre1(document, "5. Description détaillée des quinze modules")
 
     modules = [
         ("5.1 Tableau de bord",
@@ -593,7 +617,66 @@ def construire(chemin_sortie: str) -> str:
           "téléversable tel quel sur un serveur de collecte.",
           "Le lien entre une question et un indicateur permet la réinjection automatique des "
           "données collectées."]),
-        ("5.10 Administration",
+        ("5.10 Saisie des réalisations",
+         "Écran de renseignement des indicateurs conçu pour l'usage quotidien, y compris sur "
+         "téléphone. La liste des indicateurs affiche pour chacun la dernière période mesurée, la "
+         "valeur consolidée, le nombre de mesures agrégées et le statut de performance ; des "
+         "filtres isolent les indicateurs clés, ceux qui ne sont pas encore renseignés ou ceux "
+         "dont le statut appelle une actualisation.",
+         ["Le formulaire de saisie porte la période, la date de référence, la zone d'intervention, "
+          "l'activité qui a produit la donnée, la source et le statut de validation.",
+          "Lorsque l'indicateur exige une désagrégation, une grille de ventilation apparaît : une "
+          "ligne par catégorie, une case par modalité. Le total de la première catégorie renseignée "
+          "alimente automatiquement la valeur globale, ce qui supprime la double saisie et "
+          "garantit la cohérence entre le total et sa ventilation.",
+          "Une mesure est identifiée par le triplet indicateur / période / zone : deux zones "
+          "peuvent donc déclarer une réalisation sur la même période sans écrasement.",
+          "Le taux d'atteinte de la période est recalculé et affiché immédiatement après "
+          "l'enregistrement."]),
+        ("5.11 Équité et désagrégation",
+         "Analyse de l'inclusivité effective des interventions. Le module consolide toutes les "
+         "ventilations saisies, calcule l'indice d'équité de genre au niveau du projet, de chaque "
+         "indicateur et de chaque zone, et signale les indicateurs pour lesquels une désagrégation "
+         "est exigée mais n'a pas été renseignée.",
+         ["Le taux de désagrégation — part des indicateurs effectivement ventilés parmi ceux qui "
+          "l'exigent — constitue un indicateur de qualité du dispositif lui-même.",
+          "Pour chaque catégorie, la répartition est présentée en anneau et en tableau, avec la "
+          "liste des modalités du référentiel qui n'ont pas été renseignées.",
+          "L'écart à la parité est exprimé en points ; la parité est considérée atteinte en deçà "
+          "de cinq points d'écart."]),
+        ("5.12 Zones d'intervention",
+         "Gestion du découpage géographique et consolidation territoriale. Chaque zone porte son "
+         "niveau administratif, sa zone parente, sa population, sa cible de bénéficiaires, ses "
+         "coordonnées et son responsable.",
+         ["Le taux de couverture rapporte les bénéficiaires atteints à la cible de la zone : il "
+          "révèle les déséquilibres géographiques que les totaux nationaux masquent.",
+          "La part des femmes est calculée zone par zone, ce qui permet d'identifier les "
+          "territoires où l'inclusion des femmes est en retrait.",
+          "Un tableau distinct présente les données collectées par activité : il relie la collecte "
+          "de données à la mise en œuvre et permet de vérifier qu'une activité déclarée avancée "
+          "produit effectivement des réalisations mesurées."]),
+        ("5.13 Qualité des indicateurs",
+         "Diagnostic SMART du système de mesure. Chaque indicateur est évalué sur cinq critères, "
+         "d'abord par un contrôle automatique fondé sur les données réellement saisies, ensuite "
+         "par une revue manuelle qui prévaut sur ce contrôle.",
+         ["Le score du système est la moyenne des scores individuels ; il est décomposé par "
+          "critère, ce qui indique la faiblesse dominante du dispositif.",
+          "Chaque critère non satisfait produit une action correctrice nommée et actionnable "
+          "(« rédiger la définition opérationnelle », « fixer une échéance de cible »…).",
+          "La revue est datée et commentée, ce qui documente la démarche d'amélioration continue "
+          "attendue lors des audits de qualité des données."]),
+        ("5.14 Rapports périodiques",
+         "Production des rapports trimestriels, semestriels et annuels. La période de rapportage "
+         "est choisie dans une liste combinant les périodes déjà renseignées et celles déduites du "
+         "calendrier du projet.",
+         ["Un aperçu s'affiche avant génération : indicateurs de la période, taux moyen "
+          "d'atteinte, bénéficiaires ventilés, exécution financière, écarts à traiter et "
+          "consolidation par zone.",
+          "Une période annuelle englobe automatiquement ses semestres et ses trimestres ; une "
+          "période semestrielle englobe ses deux trimestres.",
+          "Le rapport produit comporte huit parties, dont un bloc de validation à signer par le "
+          "responsable de suivi-évaluation, le coordonnateur et le comité de pilotage."]),
+        ("5.15 Administration",
          "Gestion des comptes, des rôles et consultation du journal d'audit.",
          ["Cinq rôles hiérarchisés déterminent les droits : lecteur, opérateur de saisie, "
           "responsable de suivi-évaluation, coordonnateur, administrateur.",
@@ -697,7 +780,67 @@ def construire(chemin_sortie: str) -> str:
          "que le traitement produit l'effet attendu. Un risque dont le score résiduel demeure "
          "critique appelle une réorientation stratégique, non une simple mesure opérationnelle.")
 
-    titre2(document, "6.6 Articulation entre risques et hypothèses")
+    titre2(document, "6.6 Règle d'agrégation des mesures")
+    para(document,
+         "Un indicateur suivi sur plusieurs zones d'intervention produit plusieurs mesures pour une "
+         "même période. La consolidation ne peut être uniforme : additionner des effectifs de "
+         "bénéficiaires est correct, additionner des rendements moyens ne l'est pas. Chaque "
+         "indicateur porte donc une règle d'agrégation explicite, déduite de son unité de mesure à "
+         "défaut de choix de l'utilisateur.")
+    tableau(document, ["Règle", "Application", "Exemples d'indicateurs"],
+            [["Somme", "Grandeurs cumulables sur le territoire",
+              "Nombre de producteurs formés, tonnes de semences distribuées, hectares aménagés"],
+             ["Moyenne", "Taux, ratios, scores et rendements",
+              "Rendement moyen du maïs (t/ha), incidence de la pauvreté (%), score de diversité "
+              "alimentaire"],
+             ["Dernière valeur", "États et stocks appréciés à une date",
+              "Nombre d'infrastructures fonctionnelles à la date de la revue"],
+             ["Maximum", "Couvertures ne devant pas être cumulées",
+              "Portée maximale atteinte sur une zone"]],
+            largeurs=[3, 5, 8.5], taille=9.5)
+    encadre(document, "Erreur évitée",
+            "Sans règle d'agrégation, un indicateur d'effectifs mesuré sur six préfectures "
+            "afficherait la valeur de la dernière zone saisie au lieu du total national, ce qui "
+            "diviserait mécaniquement la performance affichée par six. Symétriquement, un "
+            "rendement moyen mesuré sur six zones afficherait la somme des six rendements, soit "
+            "une valeur six fois trop élevée.")
+
+    titre2(document, "6.7 Indice d'équité de genre")
+    para(document,
+         "À partir de la ventilation par sexe, la plateforme calcule la part des femmes parmi les "
+         "bénéficiaires, l'écart à la parité exprimé en points de pourcentage et une appréciation "
+         "qualitative. La parité est considérée atteinte lorsque l'écart est inférieur à cinq "
+         "points ; en deçà de 45 % de femmes, une sous-représentation est signalée.")
+    para(document,
+         "Cet indice est produit à quatre niveaux : le projet dans son ensemble, chaque indicateur, "
+         "chaque zone d'intervention et chaque activité. Cette granularité est déterminante : un "
+         "projet peut afficher une parité satisfaisante au niveau national tout en présentant, sur "
+         "certaines zones ou certaines activités, une exclusion marquée des femmes. Seule la "
+         "ventilation territoriale rend ce phénomène visible.")
+
+    titre2(document, "6.8 Score de qualité SMART")
+    para(document,
+         "Chaque indicateur est noté sur cent points, à raison de vingt points par critère "
+         "satisfait. Le contrôle est d'abord automatique — il s'appuie sur les informations "
+         "effectivement saisies dans la fiche — puis peut être corrigé par une revue manuelle "
+         "documentée, qui prévaut sur le contrôle automatique.")
+    tableau(document, ["Critère", "Contrôle automatique appliqué"],
+            [["Spécifique", "Le libellé et la définition opérationnelle sont renseignés"],
+             ["Mesurable", "L'unité de mesure et le mode de calcul ou la méthode de collecte sont "
+                           "renseignés"],
+             ["Atteignable", "Une valeur de référence et une cible finale distinctes sont "
+                             "renseignées"],
+             ["Pertinent", "L'indicateur est rattaché à un résultat du cadre logique"],
+             ["Temporellement défini", "Une échéance de cible et une fréquence de collecte sont "
+                                       "renseignées"]],
+            largeurs=[4.5, 12], taille=9.5)
+    para(document,
+         "Le score du système est la moyenne des scores individuels : excellente au-delà de 90 %, "
+         "bonne au-delà de 75 %, acceptable au-delà de 60 %, insuffisante en deçà. Chaque critère "
+         "non satisfait produit une action correctrice nommée, ce qui transforme le diagnostic en "
+         "plan de travail.")
+
+    titre2(document, "6.9 Articulation entre risques et hypothèses")
     para(document,
          "Le cadre logique distingue les hypothèses — conditions externes nécessaires à la "
          "réalisation de la chaîne de résultats — des risques, qui en sont la formulation "
@@ -785,7 +928,7 @@ def construire(chemin_sortie: str) -> str:
     # ------------------------------------------------- 8. Livrables
     titre1(document, "8. Livrables générés automatiquement")
     para(document,
-         "Seize livrables sont produits à la demande, à partir des données saisies. Tous sont "
+         "Vingt-deux livrables sont produits à la demande, à partir des données saisies. Tous sont "
          "modifiables après téléchargement, ce qui préserve la liberté rédactionnelle des équipes "
          "tout en supprimant le travail de mise en forme.")
     tableau(document, ["Livrable", "Format", "Contenu et usage"],
@@ -815,6 +958,20 @@ def construire(chemin_sortie: str) -> str:
              ["Rapport de performance", "Word", "Résumé exécutif, tableau des indicateurs, "
                                                 "exécution physique et financière, alertes, "
                                                 "canevas de mesures correctrices"],
+             ["Rapport trimestriel de suivi", "Word",
+              "Rapport périodé en huit parties, avec analyse d'équité et consolidation par zone"],
+             ["Rapport semestriel d'avancement", "Word",
+              "Même structure, sur un semestre de rapportage"],
+             ["Rapport annuel de performance", "Word",
+              "Bilan annuel consolidé, prêt pour le comité de pilotage et le bailleur"],
+             ["Analyse d'équité et données désagrégées", "Excel",
+              "Ventilation par catégorie, indice d'équité de genre, détail indicateur × modalité, "
+              "graphique de répartition par sexe"],
+             ["Consolidation par zone d'intervention", "Excel",
+              "Bénéficiaires et indicateurs par zone, taux de couverture, collecte par activité, "
+              "graphique atteints/cible"],
+             ["Revue qualité SMART", "Excel",
+              "Diagnostic critère par critère, score du système, actions correctrices"],
              ["Tableau de bord", "Excel", "Indicateurs clés, graphiques natifs Excel, feuille "
                                           "d'alertes, détail des indicateurs"],
              ["Jeu de données Power BI", "Excel", "Modèle en étoile, dimension calendrier, notice "
@@ -826,7 +983,40 @@ def construire(chemin_sortie: str) -> str:
                                         "format, avec notice d'utilisation"]],
             largeurs=[5, 2.6, 8.9], taille=8.5)
 
-    titre2(document, "8.1 Le manuel de suivi-évaluation")
+    titre2(document, "8.1 Le rapport périodique de suivi")
+    para(document,
+         "C'est le livrable le plus sollicité d'un dispositif de suivi-évaluation, et celui dont la "
+         "production mobilise habituellement le plus de temps. La plateforme le compose en huit "
+         "parties à partir des seules données de la période choisie.")
+    tableau(document, ["Partie", "Contenu produit automatiquement"],
+            [["1. Résumé exécutif", "Nombre d'indicateurs mesurés, taux moyen d'atteinte des "
+                                    "cibles de la période, répartition par statut, avancement "
+                                    "physique, exécution financière, bénéficiaires ventilés"],
+             ["2. Performance des indicateurs", "Tableau code, indicateur, unité, cible de la "
+                                                "période, réalisé, taux, statut coloré, source, "
+                                                "responsable"],
+             ["3. Analyse des données désagrégées", "Une sous-section par catégorie de "
+                                                    "ventilation, avec effectifs, parts et total ; "
+                                                    "indice d'équité de genre commenté"],
+             ["4. Consolidation par zone", "Bénéficiaires atteints, cible, couverture et part des "
+                                           "femmes par zone ; détail des réalisations par zone et "
+                                           "par indicateur"],
+             ["5. Exécution physique et financière", "Activités programmées, achevées, avancement "
+                                                     "moyen, budget programmé et décaissé ; "
+                                                     "données collectées par activité"],
+             ["6. Difficultés et mesures correctrices", "Tableau des écarts constatés, à compléter "
+                                                        "en réunion de revue (cause, mesure, "
+                                                        "responsable, échéance)"],
+             ["7. Qualité du dispositif", "Score SMART du système, taux de désagrégation, "
+                                          "indicateurs à reprendre et actions recommandées"],
+             ["8. Validation", "Bloc de signatures : rédacteur, vérificateur, approbateur"]],
+            largeurs=[5, 11.5], taille=9)
+    para(document,
+         "Le périmètre temporel est déduit du libellé de la période : une période annuelle englobe "
+         "ses semestres et ses trimestres, une période semestrielle englobe ses deux trimestres. "
+         "L'utilisateur peut visualiser à l'écran le contenu du rapport avant de le générer.")
+
+    titre2(document, "8.2 Le manuel de suivi-évaluation")
     para(document,
          "Ce livrable mérite une mention particulière : il constitue habituellement le document "
          "le plus coûteux à produire d'un dispositif de S&E, et le premier à devenir obsolète. La "
@@ -936,13 +1126,23 @@ def construire(chemin_sortie: str) -> str:
             [["Dim_Projet", "Dimension", "Identification et caractéristiques du projet"],
              ["Dim_Resultat", "Dimension", "Chaîne de résultats hiérarchisée"],
              ["Dim_Indicateur", "Dimension", "Métadonnées complètes des indicateurs"],
+             ["Dim_Zone", "Dimension", "Zones d'intervention, population, cible de bénéficiaires, "
+                                       "latitude et longitude"],
              ["Dim_Calendrier", "Dimension", "Table de dates mensuelle et trimestrielle"],
              ["Fait_Cible", "Fait", "Cibles périodiques"],
-             ["Fait_Realisation", "Fait", "Réalisations mesurées, taux et statut de performance"],
+             ["Fait_Realisation", "Fait", "Réalisations mesurées, localisées et rattachées à une "
+                                          "activité, taux et statut de performance"],
+             ["Fait_Desagregation", "Fait", "Table dépliée : une ligne par modalité de "
+                                            "désagrégation (sexe, âge, groupe cible)"],
              ["Fait_Activite", "Fait", "Activités, avancement et coûts"],
              ["Fait_Budget", "Fait", "Lignes budgétaires, engagements et décaissements"],
              ["Fait_Risque", "Fait", "Risques cotés et niveaux de criticité"]],
             largeurs=[4, 3, 9.5], taille=9.5)
+    para(document,
+         "La table Fait_Desagregation est volontairement dépliée : elle s'utilise directement dans "
+         "un histogramme empilé segmenté par sexe ou par groupe cible, sans transformation "
+         "préalable. Les coordonnées portées par Dim_Zone permettent un visuel cartographique "
+         "immédiat.")
 
     titre2(document, "10.5 Mesures DAX recommandées")
     code(document, [
@@ -956,6 +1156,19 @@ def construire(chemin_sortie: str) -> str:
         "",
         "Risques critiques =",
         "    CALCULATE(COUNTROWS(Fait_Risque), Fait_Risque[Niveau] = \"Critique\")",
+        "",
+        "Bénéficiaires femmes =",
+        "    CALCULATE(SUM(Fait_Desagregation[Valeur]),",
+        "              Fait_Desagregation[Categorie] = \"Sexe\",",
+        "              Fait_Desagregation[Modalite] = \"Femme\")",
+        "",
+        "Part des femmes =",
+        "    DIVIDE([Bénéficiaires femmes],",
+        "           CALCULATE(SUM(Fait_Desagregation[Valeur]),",
+        "                     Fait_Desagregation[Categorie] = \"Sexe\"))",
+        "",
+        "Taux de couverture de zone =",
+        "    DIVIDE(SUM(Fait_Realisation[ValeurRealisee]), SUM(Dim_Zone[CibleBeneficiaires]))",
     ])
 
     document.add_page_break()
@@ -1019,12 +1232,18 @@ def construire(chemin_sortie: str) -> str:
          "d'import depuis la vue Importer, y transposer les données, puis charger le classeur. "
          "Sinon, construire l'arborescence directement dans la vue Cadre logique, du niveau "
          "impact vers les activités."),
+        ("Déclarer les zones d'intervention",
+         "Vue Zones d'intervention. Saisir le découpage géographique du projet, du niveau le plus "
+         "large vers le plus fin, en renseignant pour chaque zone sa population, sa cible de "
+         "bénéficiaires et son responsable. Cette étape conditionne la consolidation territoriale "
+         "et le calcul des taux de couverture ; elle doit précéder la saisie des réalisations."),
         ("Paramétrer les indicateurs",
          "Pour chaque indicateur, compléter la fiche métadonnée : définition opérationnelle, "
-         "unité, mode de calcul, désagrégations exigées, valeur de référence et sa date, cible "
-         "finale et son échéance, sens de progression, fréquence, source, méthode de collecte, "
-         "responsable. Marquer comme « indicateur clé » ceux qui seront présentés au comité de "
-         "pilotage."),
+         "unité, mode de calcul, désagrégations exigées (au minimum le sexe), valeur de référence "
+         "et sa date, cible finale et son échéance, sens de progression, règle d'agrégation, "
+         "fréquence, source, méthode de collecte, responsable. Marquer comme « indicateur clé » "
+         "ceux qui seront présentés au comité de pilotage. Vérifier ensuite le score SMART dans la "
+         "vue Qualité des indicateurs et traiter les actions correctrices recommandées."),
         ("Générer les cibles périodiques",
          "Depuis la fiche de suivi de chaque indicateur, utiliser « Générer les cibles "
          "périodiques » en choisissant la granularité. La plateforme interpole linéairement entre "
@@ -1051,15 +1270,21 @@ def construire(chemin_sortie: str) -> str:
          "puis former les enquêteurs. Exporter également la version Word pour les contextes où "
          "l'administration papier reste nécessaire."),
         ("Alimenter le suivi",
-         "À chaque échéance de collecte, saisir les réalisations dans la vue Cadre de suivi, ou "
-         "réimporter l'export KoboToolbox. Mettre à jour l'avancement des activités et les "
-         "montants engagés et décaissés."),
+         "À chaque échéance de collecte, saisir les réalisations dans la vue Saisie des "
+         "réalisations en renseignant la période, la zone, l'activité source et la ventilation par "
+         "sexe et par groupe cible ; ou réimporter l'export KoboToolbox. La vue Cadre de suivi "
+         "permet une saisie en masse pour les indicateurs non désagrégés. Mettre à jour "
+         "l'avancement des activités et les montants engagés et décaissés."),
         ("Analyser et décider",
-         "Consulter le tableau de bord, traiter les alertes par ordre de gravité, documenter les "
-         "causes des écarts et arrêter les mesures correctrices lors de la revue périodique."),
-        ("Produire les livrables",
-         "Depuis la vue Livrables, générer les documents attendus, ou télécharger le dossier "
-         "complet au format ZIP avant chaque comité de pilotage."),
+         "Consulter le tableau de bord, traiter les alertes par ordre de gravité, vérifier "
+         "l'équilibre territorial dans la vue Zones et l'inclusivité dans la vue Équité, "
+         "documenter les causes des écarts et arrêter les mesures correctrices lors de la revue "
+         "périodique."),
+        ("Produire les rapports et livrables",
+         "Depuis la vue Rapports périodiques, choisir la période et générer le rapport "
+         "trimestriel, semestriel ou annuel après en avoir vérifié l'aperçu. Depuis la vue "
+         "Livrables, générer les autres documents attendus ou télécharger le dossier complet au "
+         "format ZIP avant chaque comité de pilotage."),
     ]
     for index, (titre_etape, description) in enumerate(etapes, start=1):
         titre3(document, f"Étape {index} — {titre_etape}")
@@ -1067,7 +1292,8 @@ def construire(chemin_sortie: str) -> str:
 
     encadre(document, "Ordre recommandé",
             "Le cadre logique doit précéder les indicateurs, qui doivent précéder les cibles "
-            "périodiques ; les activités doivent précéder les lignes budgétaires. Cet ordre "
+            "périodiques ; les zones et les activités doivent précéder les réalisations, qui s'y "
+            "rattachent ; les activités doivent précéder les lignes budgétaires. Cet ordre "
             "garantit que chaque élément trouve son rattachement au moment de sa création et "
             "évite les reprises ultérieures.")
 
@@ -1232,8 +1458,17 @@ def construire(chemin_sortie: str) -> str:
                            "contrôle du projet"],
              ["Risque", "Événement incertain dont la survenue affecterait l'atteinte des "
                         "résultats"],
-             ["Désagrégation", "Ventilation d'un indicateur par catégorie : sexe, âge, région, "
-                               "milieu, statut"],
+             ["Désagrégation", "Ventilation d'un indicateur par catégorie : sexe, âge, milieu, "
+                               "groupe cible, situation de handicap, niveau de vulnérabilité"],
+             ["Règle d'agrégation", "Mode de consolidation des mesures d'une même période "
+                                    "collectées sur plusieurs zones : somme, moyenne, dernière "
+                                    "valeur ou maximum"],
+             ["Indice d'équité de genre", "Part des femmes parmi les bénéficiaires et écart à la "
+                                          "parité, exprimé en points de pourcentage"],
+             ["Taux de couverture", "Rapport entre les bénéficiaires atteints sur une zone et la "
+                                    "cible fixée pour cette zone"],
+             ["Zone d'intervention", "Unité géographique de mise en œuvre et de consolidation des "
+                                     "données, organisée en hiérarchie administrative"],
              ["GAR", "Gestion axée sur les résultats : approche centrée sur l'atteinte de "
                      "résultats mesurables"],
              ["SMART", "Critères de qualité d'un indicateur : spécifique, mesurable, atteignable, "
@@ -1305,8 +1540,14 @@ def construire(chemin_sortie: str) -> str:
              ["Catégories budgétaires", "Personnel, équipements, formations, prestations, missions "
                                         "et déplacements, fonctionnement, investissements, "
                                         "communication, suivi-évaluation, imprévus"],
-             ["Désagrégations", "Sexe, âge, région, milieu, handicap, statut socio-économique, "
-                                "type de bénéficiaire, commune"],
+             ["Catégories de désagrégation et modalités",
+              "Sexe (Femme, Homme) · Âge (moins de 18 ans, 18 à 35, 36 à 59, 60 et plus) · "
+              "Milieu (urbain, rural) · Groupe cible (producteur, transformatrice, jeune, femme "
+              "cheffe de ménage, personne en situation de handicap, personne déplacée, autre) · "
+              "Situation de handicap · Niveau de vulnérabilité · Statut d'occupation"],
+             ["Niveaux de zone", "Pays, région, préfecture, commune, canton, village, site"],
+             ["Règles d'agrégation", "Somme, moyenne, dernière valeur, maximum"],
+             ["Types de rapport périodique", "Trimestriel, semestriel, annuel"],
              ["Unités de mesure", "Nombre, pourcentage, ratio, score, indice, tonne, hectare, "
                                   "kilomètre, FCFA, USD, EUR, jour, mois, t/ha, kg, litre"],
              ["Types de formulaire", "Questionnaire, fiche de suivi, grille d'entretien, grille "
