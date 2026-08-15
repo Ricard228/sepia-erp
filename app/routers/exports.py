@@ -1,4 +1,5 @@
-"""Production et téléchargement des livrables Word, Excel et XLSForm."""
+"""Production et téléchargement des livrables Word, Excel, XLSForm et JSON."""
+import json
 import re
 from datetime import date
 from typing import Optional
@@ -13,7 +14,7 @@ from ..crud import ensure_project
 from ..database import get_db
 from ..models import Form, Project, User
 from ..security import current_user
-from ..services import analytics, excel_export, word_export, xlsform
+from ..services import analytics, excel_export, portability, word_export, xlsform
 
 router = APIRouter(prefix="/api/exports", tags=["Exports"])
 
@@ -99,6 +100,13 @@ LIVRABLES = [
      "description": "KPI, graphiques, alertes et détail des indicateurs."},
     {"cle": "powerbi-dataset", "libelle": "Jeu de données Power BI", "format": "Excel",
      "description": "Modèle en étoile (dimensions et faits) avec notice de branchement."},
+    {"cle": "projet-json", "libelle": "Projet complet (sauvegarde SEPIA)", "format": "JSON",
+     "description": "Sauvegarde intégrale et réversible du projet, questionnaires compris, "
+                    "rechargeable sur une autre instance."},
+    {"cle": "projet-transfert-excel", "libelle": "Projet complet au format d'import",
+     "format": "Excel",
+     "description": "Toutes les données du projet dans la structure du modèle d'import : "
+                    "modifiable dans un tableur et rechargeable tel quel."},
     {"cle": "modele-import", "libelle": "Modèle d'import", "format": "Excel",
      "description": "Classeur type à remplir pour charger un projet complet."},
     {"cle": "dossier-complet", "libelle": "Dossier complet de S&E", "format": "ZIP",
@@ -145,6 +153,14 @@ def _produire(cle: str, db: Session, projet: Project, annee: Optional[int] = Non
     if cle == "organisation-word":
         return word_export.organisation_projet_docx(db, projet), \
             _nom_fichier(projet, "Organisation_et_ordonnancement", "docx"), MIME_DOCX
+    if cle == "projet-json":
+        contenu = portability.exporter_projet(db, projet)
+        donnees = json.dumps(contenu, ensure_ascii=False, indent=2).encode("utf-8")
+        return BytesIO(donnees), _nom_fichier(projet, "Sauvegarde_complete", "json"), \
+            "application/json; charset=utf-8"
+    if cle == "projet-transfert-excel":
+        return excel_export.projet_transfert_xlsx(db, projet), \
+            _nom_fichier(projet, "Transfert_projet_complet", "xlsx"), MIME_XLSX
     if cle == "ptba-excel":
         return excel_export.ptba_xlsx(db, projet, annee), \
             _nom_fichier(projet, f"PTBA_{annee or 'pluriannuel'}", "xlsx"), MIME_XLSX
@@ -195,6 +211,20 @@ def _produire(cle: str, db: Session, projet: Project, annee: Optional[int] = Non
 def modele_import(user: User = Depends(current_user)):
     return _reponse(excel_export.modele_import_xlsx(),
                     f"SEPIA_Modele_import_{date.today().isoformat()}.xlsx", MIME_XLSX)
+
+
+@router.get("/portefeuille/json")
+def exporter_portefeuille_json(projets: Optional[str] = Query(
+        None, description="Identifiants séparés par des virgules ; toutes les fiches par défaut"),
+        db: Session = Depends(get_db), user: User = Depends(current_user)):
+    """Sauvegarde intégrale du portefeuille : tous les projets dans un fichier unique."""
+    identifiants = None
+    if projets:
+        identifiants = [int(p) for p in projets.split(",") if p.strip().isdigit()]
+    contenu = portability.exporter_portefeuille(db, identifiants)
+    donnees = json.dumps(contenu, ensure_ascii=False, indent=2).encode("utf-8")
+    nom = f"SEPIA_Portefeuille_{contenu['nb_projets']}_projets_{date.today().isoformat()}.json"
+    return _reponse(BytesIO(donnees), nom, "application/json; charset=utf-8")
 
 
 @router.get("/{project_id}/{cle}")

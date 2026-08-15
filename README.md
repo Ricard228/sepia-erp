@@ -20,7 +20,7 @@ manuel de suivi-évaluation, rapports périodiques, tableaux de bord Excel et fl
 | **Fiche projet** | Identification, ancrage institutionnel, théorie du changement, alignement stratégique (ODD, stratégies nationales) |
 | **Cadre logique** | Arborescence Impact → Effets → Produits → Activités, sources de vérification, hypothèses, responsables |
 | **Zones d'intervention** | Découpage géographique hiérarchisé, population, cible de bénéficiaires, coordonnées, responsable de zone, et **carte de couverture** à symboles proportionnels |
-| **Chronogramme et ordonnancement** | Cinq onglets : diagramme de Gantt · **chemin critique et réseau PERT** (durée du projet, dates au plus tôt et au plus tard, marges) · **organigramme des tâches (WBS)** · **matrice RACI** éditable · liste des activités |
+| **Chronogramme et ordonnancement** | Cinq onglets : diagramme de Gantt **avec chemin critique matérialisé** · **réseau PERT et courbe en S** · **organigramme des tâches (WBS)** · **matrice RACI** éditable · liste des activités. Gantt, PERT, WBS, courbe et carte sont **exportables en PNG et en SVG** |
 | **PTBA / budget** | Lignes budgétaires détaillées, ventilation trimestrielle, engagements et décaissements |
 
 ### Collecte et suivi
@@ -43,7 +43,8 @@ manuel de suivi-évaluation, rapports périodiques, tableaux de bord Excel et fl
 | Module | Contenu |
 |---|---|
 | **Rapports périodiques** | Génération des rapports **trimestriels, semestriels et annuels** avec aperçu à l'écran avant production |
-| **Livrables** | 26 documents Word / Excel / ZIP produits à la demande |
+| **Sauvegarde et transfert** | Export/import **JSON** complet d'un projet ou du **portefeuille entier**, et classeur **Excel réversible** au format d'import |
+| **Livrables** | 28 documents Word / Excel / JSON / ZIP produits à la demande |
 | **Power BI** | Flux temps réel et modèle en étoile, table de faits désagrégée et dimension géographique |
 
 ### Méthodologie de calcul de la performance
@@ -114,6 +115,37 @@ conformément à la licence.
 Les colonnes latitude et longitude figurent dans l'export « Consolidation par zone », ce qui permet
 de cartographier les mêmes données dans Power BI (visuel Carte) ou dans un SIG.
 
+### Export des graphiques en image
+
+Le diagramme de Gantt, le réseau PERT, l'organigramme des tâches, la courbe d'avancement et la
+carte de couverture s'exportent en **PNG** (rendu au double de la résolution, fond blanc, prêt à
+insérer dans un rapport) et en **SVG** (vectoriel, redimensionnable sans perte, modifiable dans un
+logiciel de dessin).
+
+Aucune bibliothèque n'est nécessaire : les graphiques étant du SVG autonome — couleurs portées par
+des attributs, aucune police externe —, l'export sérialise le SVG puis, pour le PNG, le rastérise
+dans un canevas. L'image de la carte contient les symboles, le graticule et l'échelle, mais pas le
+fond de carte OpenStreetMap, dont l'origine externe rendrait le canevas non exportable.
+
+### Sauvegarde, transfert et restauration
+
+| Format | Contenu | Réversible |
+|---|---|---|
+| **JSON projet** | Intégralité d'un projet : cadre logique, zones, indicateurs, cibles, réalisations désagrégées et localisées, activités, budget, risques, hypothèses, parties prenantes, matrice RACI, questionnaires et questions | Oui, à l'identique |
+| **JSON portefeuille** | Tous les projets de l'instance dans un fichier unique | Oui, à l'identique |
+| **Excel de transfert** | Toutes les données du projet dans la structure du modèle d'import, retravaillable dans un tableur | Oui, hors questionnaires |
+
+À l'import, les identifiants sont réattribués et **toutes les références internes réécrites** —
+parent d'un résultat, zone d'une mesure, activité d'une ligne budgétaire, acteur d'une affectation
+RACI. Le fichier peut donc provenir d'une autre instance de la plateforme. Si le code du projet est
+déjà pris, il est suffixé et l'utilisateur en est averti ; l'option « remplacer » permet à l'inverse
+d'écraser le projet de même code, pour restaurer une sauvegarde.
+
+L'aller-retour est vérifié entité par entité : sur le projet de démonstration, les 8 zones,
+14 résultats, 20 indicateurs, 26 cibles, 79 réalisations, 14 activités, 18 lignes budgétaires,
+8 risques, 6 hypothèses, 11 parties prenantes, 75 affectations RACI et 2 questionnaires sont
+restitués à l'identique, chemin critique et analyse d'équité compris.
+
 ### Ordonnancement : chemin critique, PERT, WBS et RACI
 
 **Chemin critique (CPM).** Les activités portent des antécédents (relation fin-début) et une durée
@@ -183,7 +215,8 @@ sepia-erp/
 │       │                     analyses périodées, alertes, portefeuille
 │       ├── planning.py       Chemin critique (CPM), réseau PERT, organigramme des
 │       │                     tâches (WBS) et matrice des responsabilités (RACI)
-│       ├── excel_export.py   15 classeurs Excel mis en forme (XlsxWriter)
+│       ├── portability.py    Export et import JSON complets (projet, portefeuille)
+│       ├── excel_export.py   16 classeurs Excel mis en forme (XlsxWriter)
 │       ├── word_export.py    9 documents Word (python-docx)
 │       ├── xlsform.py        Génération XLSForm KoboToolbox / ODK
 │       └── importer.py       Analyseurs Excel et Word tolérants
@@ -350,6 +383,10 @@ GET    /api/planning/wbs/{id}              Organigramme des tâches consolidé
 POST   /api/planning/wbs/{id}/codifier     Inscription des codes WBS sur les activités
 GET    /api/planning/raci/{id}             Matrice RACI, charge par acteur, anomalies
 POST   /api/planning/raci/{id}/cellule     Attribution ou retrait d'un rôle RACI
+GET    /api/planning/courbe-avancement/{id} Courbe en S : engagement planifié et réalisé
+GET    /api/exports/{id}/projet-json       Sauvegarde JSON complète d'un projet
+GET    /api/exports/portefeuille/json      Sauvegarde JSON du portefeuille entier
+POST   /api/imports/sepia-json             Restauration d'un projet ou d'un portefeuille
 POST   /api/imports/excel/{id}             Import d'un classeur
 POST   /api/imports/word/analyser          Analyse d'un document Word
 POST   /api/imports/kobo/{form_id}         Réinjection de données collectées

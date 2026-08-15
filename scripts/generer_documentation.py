@@ -604,9 +604,18 @@ def construire(chemin_sortie: str) -> str:
           "ou en cours, vert pour les activités achevées, rouge pour celles dont l'échéance est "
           "dépassée ; les jalons sont matérialisés par un losange et la date du jour par une ligne "
           "verticale. La part remplie de chaque barre représente l'avancement déclaré.",
+          "Le chemin critique est matérialisé sur le diagramme de Gantt : les barres concernées "
+          "sont cerclées de rouge et reliées par une courbe continue, tandis que les autres liens "
+          "d'antécédence sont tracés en gris fin. La séquence déterminante se lit ainsi d'un coup "
+          "d'œil, sans changer de vue.",
           "Le chemin critique identifie la séquence d'activités sans marge : tout retard sur l'une "
           "d'elles décale d'autant la date d'achèvement du projet. Son coût et son avancement "
           "moyen sont calculés.",
+          "Une courbe en S complète l'analyse : elle confronte l'engagement de ressources programmé "
+          "et l'engagement réalisé, mois par mois.",
+          "Le diagramme de Gantt, le réseau PERT, l'organigramme des tâches, la courbe "
+          "d'avancement et la carte de couverture s'exportent en image PNG haute définition ou en "
+          "SVG vectoriel, directement insérables dans un rapport.",
           "Le réseau PERT présente chaque activité sous forme de nœud portant sa durée, ses dates "
           "au plus tôt et au plus tard et sa marge ; les activités d'un même rang peuvent être "
           "conduites en parallèle.",
@@ -971,7 +980,41 @@ def construire(chemin_sortie: str) -> str:
          "qui approuve un nombre disproportionné d'activités constitue un goulot d'étranglement "
          "décisionnel, signalé comme tel.")
 
-    titre2(document, "6.13 Articulation entre risques et hypothèses")
+    titre2(document, "6.13 Courbe d'avancement (courbe en S)")
+    para(document,
+         "La courbe en S représente l'engagement cumulé des ressources, mois par mois. Le coût de "
+         "chaque activité est réparti linéairement sur sa durée puis cumulé : la courbe programmée "
+         "court sur toute la durée du projet et atteint 100 %, tandis que la courbe réalisée "
+         "s'arrête au mois en cours, l'avancement déclaré déterminant la part effectivement "
+         "consommée.")
+    para(document,
+         "Sa forme en S est caractéristique de la conduite de projet : montée lente au démarrage, "
+         "accélération en phase de croisière, ralentissement à l'approche de la clôture. L'écart "
+         "vertical entre les deux courbes à la date du jour mesure l'avance ou le retard "
+         "d'exécution, exprimé en points de pourcentage.")
+
+    titre2(document, "6.14 Portabilité et intégrité des données")
+    para(document,
+         "La sauvegarde JSON produit un fichier autonome contenant l'intégralité d'un projet ou "
+         "d'un portefeuille. À l'import, les identifiants sont réattribués par la base d'accueil et "
+         "toutes les références internes sont réécrites — parent d'un résultat, zone d'une mesure, "
+         "activité d'une ligne budgétaire, acteur d'une affectation RACI. L'échange est donc "
+         "indépendant des séquences de clés primaires et fonctionne entre instances distinctes.")
+    tableau(document, ["Format", "Contenu", "Réversibilité"],
+            [["JSON projet", "Intégralité d'un projet, questionnaires et questions compris",
+              "Restitution à l'identique"],
+             ["JSON portefeuille", "Tous les projets de l'instance dans un fichier unique",
+              "Restitution à l'identique"],
+             ["Excel de transfert", "Toutes les données dans la structure du modèle d'import",
+              "Réversible, hors questionnaires"]],
+            largeurs=[4, 8.5, 4], taille=9.5)
+    encadre(document, "Gestion des collisions de code",
+            "Si le code du projet importé est déjà utilisé, il est suffixé automatiquement et "
+            "l'utilisateur en est averti dans le rapport d'import. L'option « remplacer un projet "
+            "existant » produit l'effet inverse : le projet de même code est supprimé au préalable, "
+            "ce qui permet de restaurer une sauvegarde par-dessus une version altérée.")
+
+    titre2(document, "6.15 Articulation entre risques et hypothèses")
     para(document,
          "Le cadre logique distingue les hypothèses — conditions externes nécessaires à la "
          "réalisation de la chaîne de résultats — des risques, qui en sont la formulation "
@@ -1044,7 +1087,26 @@ def construire(chemin_sortie: str) -> str:
          "métadonnées techniques sont écartées et les contraintes conservées. Le questionnaire "
          "devient alors modifiable dans la plateforme et exportable en Word.")
 
-    titre2(document, "7.4 Réinjection des données collectées")
+    titre2(document, "7.4 Sauvegarde et transfert de projets entiers")
+    para(document,
+         "Au-delà de l'import de données, la plateforme permet de sauvegarder et de transférer des "
+         "projets complets. Trois usages sont couverts : la sauvegarde de sécurité avant une "
+         "modification lourde, le transfert d'un projet d'une instance à une autre — d'un poste "
+         "local vers le serveur, ou entre deux organisations —, et le travail hors ligne dans un "
+         "tableur suivi d'un rechargement.")
+    for texte in [
+        "La sauvegarde JSON d'un projet contient l'ensemble de ses données, questionnaires "
+        "compris, et se recharge à l'identique.",
+        "La sauvegarde JSON du portefeuille regroupe tous les projets de l'instance dans un "
+        "fichier unique, ce qui constitue une copie de sécurité complète de la plateforme.",
+        "Le classeur Excel de transfert reprend la structure du modèle d'import : il se retravaille "
+        "dans un tableur, se transmet par courriel et se recharge tel quel.",
+        "Le rapport d'import détaille, projet par projet, le nombre d'enregistrements recréés dans "
+        "chaque catégorie et les éventuels avertissements.",
+    ]:
+        puce(document, texte)
+
+    titre2(document, "7.5 Réinjection des données collectées")
     para(document,
          "L'export XLSX produit par KoboToolbox est réimportable. Les colonnes portant le nom "
          "technique d'une question reliée à un indicateur alimentent automatiquement les "
@@ -1059,7 +1121,7 @@ def construire(chemin_sortie: str) -> str:
     # ------------------------------------------------- 8. Livrables
     titre1(document, "8. Livrables générés automatiquement")
     para(document,
-         "Vingt-six livrables sont produits à la demande, à partir des données saisies. Tous sont "
+         "Vingt-huit livrables sont produits à la demande, à partir des données saisies. Tous sont "
          "modifiables après téléchargement, ce qui préserve la liberté rédactionnelle des équipes "
          "tout en supprimant le travail de mise en forme.")
     tableau(document, ["Livrable", "Format", "Contenu et usage"],
@@ -1084,6 +1146,14 @@ def construire(chemin_sortie: str) -> str:
              ["Organisation et ordonnancement", "Word",
               "Document réunissant l'organigramme des tâches, le chemin critique, le réseau "
               "PERT et la matrice RACI"],
+             ["Projet complet (sauvegarde SEPIA)", "JSON",
+              "Sauvegarde intégrale et réversible du projet, questionnaires compris, "
+              "rechargeable sur une autre instance"],
+             ["Portefeuille complet", "JSON",
+              "Sauvegarde de tous les projets de l'instance dans un fichier unique"],
+             ["Projet au format d'import", "Excel",
+              "Toutes les données du projet dans la structure du modèle d'import, "
+              "retravaillable dans un tableur puis rechargeable"],
              ["Plan de travail et budget annuel", "Excel",
               "Budget détaillé, ventilation trimestrielle, formules de totalisation, synthèse "
               "graphique par catégorie"],
@@ -1679,7 +1749,8 @@ def construire(chemin_sortie: str) -> str:
         "│   │   └── powerbi.py           Flux de business intelligence",
         "│   └── services/",
         "│       ├── analytics.py         Moteur de performance",
-        "│       ├── planning.py          Chemin critique, PERT, WBS et matrice RACI",
+        "│       ├── planning.py          Chemin critique, PERT, courbe en S, WBS, RACI",
+        "│       ├── portability.py       Export et import JSON (projet, portefeuille)",
         "│       ├── excel_export.py      Générateurs Excel",
         "│       ├── word_export.py       Générateurs Word",
         "│       ├── xlsform.py           Générateur XLSForm",

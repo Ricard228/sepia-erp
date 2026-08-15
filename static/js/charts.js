@@ -277,12 +277,97 @@
         '<text x="' + (x + 3) + '" y="' + (hauteur - 4) + '" font-size="9" fill="#D93025">aujourd\'hui</text>';
     }
 
+    /* Matérialisation du chemin critique : les barres critiques sont cerclées et
+       reliées par une courbe continue qui suit la séquence sans marge. Les autres
+       liens d'antécédence sont tracés en gris fin, ce qui distingue d'un coup d'œil
+       la chaîne déterminante du reste du réseau. */
+    let cheminCritique = '';
+    let liensAntecedence = '';
+    const ordonnancement = options.ordonnancement;
+    if (ordonnancement && ordonnancement.activites) {
+      const infoParCode = {};
+      ordonnancement.activites.forEach((a) => { infoParCode[a.code || String(a.id)] = a; });
+      const rangee = {};
+      activites.forEach(function (a, index) {
+        rangee[a.code || String(a.id)] = { index: index, activite: a };
+      });
+      const bord = (code, cote) => {
+        const r = rangee[code];
+        if (!r || !r.activite.start_date || !r.activite.end_date) return null;
+        return {
+          x: positionX(cote === 'fin' ? r.activite.end_date : r.activite.start_date),
+          y: 44 + r.index * hauteurLigne + 10
+        };
+      };
+
+      // Liens d'antécédence : sortie de la barre précédente vers l'entrée de la suivante.
+      ordonnancement.activites.forEach(function (a) {
+        (a.antecedents || []).forEach(function (code) {
+          const depart = bord(code, 'fin');
+          const arrivee = bord(a.code || String(a.id), 'debut');
+          if (!depart || !arrivee) return;
+          const critique = a.critique && infoParCode[code] && infoParCode[code].critique;
+          if (critique) return;   // tracé plus bas, en évidence
+          const coude = Math.max(depart.x + 6, arrivee.x - 8);
+          liensAntecedence += '<path d="M ' + depart.x + ' ' + depart.y + ' H ' + coude +
+            ' V ' + arrivee.y + ' H ' + arrivee.x + '" fill="none" stroke="#9AA0A6" ' +
+            'stroke-width="1" opacity=".65" marker-end="url(#flecheGantt)"/>';
+        });
+      });
+
+      // Halo autour des barres critiques.
+      (ordonnancement.activites || []).filter((a) => a.critique).forEach(function (a) {
+        const r = rangee[a.code || String(a.id)];
+        if (!r || !r.activite.start_date || !r.activite.end_date) return;
+        const x1 = positionX(r.activite.start_date);
+        const x2 = Math.max(x1 + 3, positionX(r.activite.end_date));
+        const y = 44 + r.index * hauteurLigne;
+        cheminCritique += '<rect x="' + (x1 - 2) + '" y="' + (y + 2) + '" width="' +
+          (x2 - x1 + 4) + '" height="17" rx="4" fill="none" stroke="#D93025" ' +
+          'stroke-width="2"/>';
+      });
+
+      // Courbe continue reliant les activités du chemin critique dans l'ordre.
+      const sequence = (ordonnancement.chemin_critique || []).filter((c) => rangee[c]);
+      let trace = '';
+      for (let i = 0; i < sequence.length - 1; i++) {
+        const depart = bord(sequence[i], 'fin');
+        const arrivee = bord(sequence[i + 1], 'debut');
+        if (!depart || !arrivee) continue;
+        const milieu = (depart.x + arrivee.x) / 2;
+        trace += '<path d="M ' + depart.x + ' ' + depart.y + ' C ' + milieu + ' ' + depart.y +
+          ', ' + milieu + ' ' + arrivee.y + ', ' + arrivee.x + ' ' + arrivee.y +
+          '" fill="none" stroke="#D93025" stroke-width="2.6" opacity=".9" ' +
+          'marker-end="url(#flecheCritique)"/>';
+      }
+      cheminCritique += trace;
+      sequence.forEach(function (code) {
+        const point = bord(code, 'debut');
+        if (point) {
+          cheminCritique += '<circle cx="' + point.x + '" cy="' + point.y +
+            '" r="3.4" fill="#D93025"/>';
+        }
+      });
+    }
+
+    const marqueurs = '<defs>' +
+      '<marker id="flecheGantt" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" ' +
+      'markerHeight="5" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" fill="#9AA0A6"/></marker>' +
+      '<marker id="flecheCritique" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" ' +
+      'markerHeight="5" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" fill="#D93025"/></marker>' +
+      '</defs>';
+
+    const legendeCritique = ordonnancement && ordonnancement.activites ?
+      '<span><i style="background:#D93025"></i>Chemin critique (marge nulle)</span>' +
+      '<span><i style="background:#9AA0A6"></i>Lien d\'antécédence</span>' : '';
+
     return '<div class="graphique"><svg viewBox="0 0 ' + largeur + ' ' + hauteur + '" width="' +
-      Math.max(largeur, 700) + '" role="img">' + entete + barresHtml + ligneAujourdhui + '</svg>' +
+      Math.max(largeur, 700) + '" role="img">' + marqueurs + entete + barresHtml +
+      liensAntecedence + cheminCritique + ligneAujourdhui + '</svg>' +
       '<div class="legende"><span><i style="background:#2E75B6"></i>En cours / planifié</span>' +
       '<span><i style="background:#0F9D58"></i>Achevé</span>' +
       '<span><i style="background:#D93025"></i>En retard</span>' +
-      '<span><i style="background:#F9A825"></i>Jalon</span></div></div>';
+      '<span><i style="background:#F9A825"></i>Jalon</span>' + legendeCritique + '</div></div>';
   }
 
   /* ------------------------------------------------------- Barres empilées */

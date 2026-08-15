@@ -215,6 +215,91 @@ def chemin_critique(db: Session, project_id: int) -> Dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Courbe d'avancement cumulé (courbe en S)
+# ---------------------------------------------------------------------------
+def courbe_avancement(db: Session, project_id: int) -> Dict[str, Any]:
+    """Courbe en S : engagement de ressources planifié et réalisé, mois par mois.
+
+    Le coût de chaque activité est réparti linéairement sur sa durée, puis cumulé.
+    La courbe planifiée court sur toute la durée du projet ; la courbe réalisée
+    s'arrête au mois en cours, l'avancement déclaré déterminant la part du coût
+    effectivement consommée.
+    """
+    activites = db.query(Activity).filter(Activity.project_id == project_id).all()
+    datees = [a for a in activites if a.start_date and a.end_date]
+    if not datees:
+        return {"periodes": [], "planifie": [], "realise": [], "planifie_pct": [],
+                "realise_pct": [], "cout_total": 0, "mois_courant": None,
+                "ecart_actuel_pct": None}
+
+    debut = min(a.start_date for a in datees)
+    fin = max(a.end_date for a in datees)
+    mois: List[Tuple[int, int]] = []
+    an, m = debut.year, debut.month
+    while (an, m) <= (fin.year, fin.month) and len(mois) < 180:
+        mois.append((an, m))
+        m += 1
+        if m > 12:
+            m, an = 1, an + 1
+
+    def fin_de_mois(annee: int, numero: int) -> date:
+        if numero == 12:
+            return date(annee, 12, 31)
+        return date(annee, numero + 1, 1) - timedelta(days=1)
+
+    cout_total = sum(a.planned_cost or 0 for a in datees) or 1
+    aujourdhui = date.today()
+    mois_courant = None
+    planifie, realise = [], []
+    cumul_planifie = 0.0
+
+    for index, (annee, numero) in enumerate(mois):
+        borne = fin_de_mois(annee, numero)
+        cumul_planifie = 0.0
+        cumul_realise = 0.0
+        for a in datees:
+            duree = max(1, (a.end_date - a.start_date).days + 1)
+            fraction = min(1.0, max(0.0, ((borne - a.start_date).days + 1) / duree))
+            cout = a.planned_cost or 0
+            cumul_planifie += cout * fraction
+            # Le montant réellement consommé — coût réel saisi, ou coût prévu
+            # au prorata de l'avancement déclaré — est étalé sur la période déjà
+            # écoulée, de sorte que la courbe réalisée atteigne ce montant au
+            # mois en cours.
+            consomme = a.actual_cost if a.actual_cost else cout * (a.progress or 0) / 100.0
+            ecoule_a_ce_jour = min(1.0, max(0.0, ((aujourdhui - a.start_date).days + 1) / duree))
+            if ecoule_a_ce_jour > 0:
+                cumul_realise += consomme * min(1.0, fraction / ecoule_a_ce_jour)
+        planifie.append(round(cumul_planifie, 2))
+        realise.append(round(cumul_realise, 2) if borne <= _fin_de_mois_courant(aujourdhui) else None)
+        if (annee, numero) == (aujourdhui.year, aujourdhui.month):
+            mois_courant = index
+
+    planifie_pct = [round(v / cout_total * 100, 1) for v in planifie]
+    realise_pct = [round(v / cout_total * 100, 1) if v is not None else None for v in realise]
+    ecart = None
+    if mois_courant is not None and realise_pct[mois_courant] is not None:
+        ecart = round(realise_pct[mois_courant] - planifie_pct[mois_courant], 1)
+
+    return {
+        "periodes": [f"{a}-{m:02d}" for a, m in mois],
+        "planifie": planifie,
+        "realise": realise,
+        "planifie_pct": planifie_pct,
+        "realise_pct": realise_pct,
+        "cout_total": round(cout_total, 2),
+        "mois_courant": mois_courant,
+        "ecart_actuel_pct": ecart,
+    }
+
+
+def _fin_de_mois_courant(reference: date) -> date:
+    if reference.month == 12:
+        return date(reference.year, 12, 31)
+    return date(reference.year, reference.month + 1, 1) - timedelta(days=1)
+
+
+# ---------------------------------------------------------------------------
 # Organigramme des tâches (Work Breakdown Structure)
 # ---------------------------------------------------------------------------
 def _numeroter(noeuds: List[Dict[str, Any]], prefixe: str = "") -> None:

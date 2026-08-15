@@ -255,8 +255,32 @@
   const portefeuille = {
     titre: 'Portefeuille de projets',
     sousTitre: 'Vue consolidée de l\'ensemble des projets et programmes',
-    actions: () => '<button class="btn btn-primaire btn-petit" data-barre="nouveau">➕ Nouveau projet</button>',
+    actions: () => '<button class="btn btn-primaire btn-petit" data-barre="nouveau">➕ Nouveau projet</button>' +
+      '<button class="btn btn-secondaire btn-petit" data-barre="sauvegarder">🗄️ Sauvegarder le portefeuille</button>' +
+      '<button class="btn btn-secondaire btn-petit" data-barre="restaurer">⬆️ Charger une sauvegarde</button>',
     gestionnairesBarre: {
+      sauvegarder: () => S.API.telecharger('/api/exports/portefeuille/json'),
+      restaurer: function () {
+        const champ = document.createElement('input');
+        champ.type = 'file';
+        champ.accept = '.json';
+        champ.addEventListener('change', async function () {
+          if (!champ.files.length) return;
+          const donnees = new FormData();
+          donnees.append('fichier', champ.files[0]);
+          donnees.append('remplacer_existant', 'false');
+          S.basculeChargement(true);
+          try {
+            const r = await S.API.televerser('/api/imports/sepia-json', donnees);
+            const nombre = r.format === 'SEPIA-PORTEFEUILLE' ? r.importes : 1;
+            S.notifier(nombre + ' projet(s) importé(s).', 'succes');
+            await global.Application.rechargerProjets();
+            global.Application.rafraichir();
+          } catch (erreur) { S.notifier(erreur.message, 'erreur'); }
+          finally { S.basculeChargement(false); }
+        });
+        champ.click();
+      },
       nouveau: function () {
         S.formulaireModal('Créer un projet', champsProjet(), { country: 'Togo', currency: 'FCFA', status: 'En cours' },
           async function (donnees) {
@@ -1130,7 +1154,10 @@
       const o = d.ordonnancement;
 
       if (activites.onglet === 'gantt') {
-        let html = S.carte('Diagramme de Gantt', G.gantt(d.activites));
+        let html = S.carte('Diagramme de Gantt et chemin critique',
+          '<div id="graphique-gantt">' + G.gantt(d.activites, { ordonnancement: o }) + '</div>',
+          S.boutonsImage('gantt', 'le diagramme de Gantt'),
+          'Les barres cerclées de rouge et reliées par la courbe rouge composent le chemin critique : tout retard sur l\'une d\'elles décale la fin du projet.');
         if (d.synthese.en_retard.length) {
           html += S.carte('Activités en retard', d.synthese.en_retard.map((a) =>
             '<div class="alerte alerte-warning"><span class="type">' + ech(a.code || '') + '</span>' +
@@ -1139,6 +1166,10 @@
             (a.responsible ? ', responsable : ' + ech(a.responsible) : '') + ')</span></div>').join(''));
         }
         zone.innerHTML = html;
+        S.brancherBoutonsImage(zone, {
+          gantt: { element: document.getElementById('graphique-gantt'),
+                   nom: 'Gantt_chemin_critique' }
+        });
         return;
       }
 
@@ -1165,8 +1196,14 @@
                 rendu: (l) => S.dateFr(l.date_debut_tot) + ' → ' + S.dateFr(l.date_fin_tot) },
               { titre: 'Avancement', classe: 'centre', rendu: (l) => barreProgression(l.progress) }
             ], critiques)) +
-          S.carte('Réseau PERT (activité sur nœud)', G.pert(o.activites),
-            '', 'Les activités d\'un même rang sont indépendantes et peuvent être conduites en parallèle.') +
+          S.carte('Réseau PERT (activité sur nœud)',
+            '<div id="graphique-pert">' + G.pert(o.activites) + '</div>',
+            S.boutonsImage('pert', 'le réseau PERT'),
+            'Les activités d\'un même rang sont indépendantes et peuvent être conduites en parallèle. Le chemin critique est tracé en rouge.') +
+          S.carte('Courbe d\'avancement du projet (courbe en S)',
+            '<div id="graphique-courbe-s"><div class="vide"><span class="icone">⏳</span>Calcul en cours…</div></div>',
+            S.boutonsImage('courbe', 'la courbe d\'avancement'),
+            'Engagement cumulé des ressources : programmé sur toute la durée du projet, réalisé jusqu\'au mois en cours.') +
           S.carte('Tableau d\'ordonnancement complet', S.tableau([
             { titre: 'Code', rendu: (l) => (l.critique ? '🔴 ' : '') + ech(l.code || '') },
             { cle: 'name', titre: 'Activité' },
@@ -1184,6 +1221,37 @@
             { titre: 'Marge libre', classe: 'centre', rendu: (l) => l.marge_libre + ' j' }
           ], o.activites),
           '', 'Marge totale : retard admissible sans décaler la fin du projet. Marge libre : retard admissible sans décaler l\'activité suivante.');
+
+        // Courbe en S chargée après affichage, pour ne pas retarder le reste de l'onglet.
+        S.API.get('/api/planning/courbe-avancement/' + projet()).then(function (c) {
+          const cible = document.getElementById('graphique-courbe-s');
+          if (!cible) return;
+          if (!c.periodes.length) {
+            cible.innerHTML = S.vide('Aucune activité datée : la courbe d\'avancement ne peut être calculée.', '📈');
+            return;
+          }
+          cible.innerHTML = G.courbes(c.periodes, [
+            { nom: 'Avancement programmé (%)', valeurs: c.planifie_pct, couleur: '#2E75B6' },
+            { nom: 'Avancement réalisé (%)', valeurs: c.realise_pct, couleur: '#0F9D58' }
+          ]) +
+            '<p style="font-size:.8rem;color:#5F6368;margin-top:.5rem">Coût total programmé : ' +
+            S.nombre(c.cout_total, 0) +
+            (c.ecart_actuel_pct !== null ?
+              ' — écart à ce jour entre réalisé et programmé : <strong style="color:' +
+              (c.ecart_actuel_pct >= -5 ? '#0F9D58' : '#D93025') + '">' +
+              (c.ecart_actuel_pct > 0 ? '+' : '') + S.nombre(c.ecart_actuel_pct, 1) +
+              ' point(s)</strong>' : '') + '</p>';
+          S.brancherBoutonsImage(zone, {
+            pert: { element: document.getElementById('graphique-pert'), nom: 'Reseau_PERT' },
+            courbe: { element: cible, nom: 'Courbe_avancement' }
+          });
+        }).catch(function () { /* la courbe est un complément, son échec n'est pas bloquant */ });
+
+        S.brancherBoutonsImage(zone, {
+          pert: { element: document.getElementById('graphique-pert'), nom: 'Reseau_PERT' },
+          courbe: { element: document.getElementById('graphique-courbe-s'),
+                    nom: 'Courbe_avancement' }
+        });
         return;
       }
 
@@ -1199,8 +1267,10 @@
             'Regroupées en gestion et coordination',
             arbre.activites_non_rattachees ? '#F9A825' : '#0F9D58') +
           '</div>' +
-          S.carte('Organigramme des tâches', G.wbs(arbre.racines, arbre.projet.code),
-            '<button class="btn btn-secondaire btn-petit" id="codifier-wbs">🔢 Inscrire les codes WBS sur les activités</button>',
+          S.carte('Organigramme des tâches',
+            '<div id="graphique-wbs">' + G.wbs(arbre.racines, arbre.projet.code) + '</div>',
+            S.boutonsImage('wbs', 'l\'organigramme des tâches') +
+            '<button class="btn btn-secondaire btn-petit" id="codifier-wbs">🔢 Codes WBS</button>',
             'Décomposition du projet en composantes, sous-composantes et lots de travail.') +
           S.carte('Décomposition détaillée', S.tableau([
             { titre: 'Code WBS', classe: 'centre', rendu: (l) => '<strong>' + ech(l.wbs) + '</strong>' },
@@ -1216,6 +1286,9 @@
             { titre: 'Avancement', classe: 'centre', rendu: (l) => barreProgression(l.avancement) },
             { titre: 'Livrable', rendu: (l) => ech(l.livrable || '—') }
           ], arbre.lignes));
+        S.brancherBoutonsImage(zone, {
+          wbs: { element: document.getElementById('graphique-wbs'), nom: 'Organigramme_WBS' }
+        });
         const bouton = document.getElementById('codifier-wbs');
         if (bouton) bouton.addEventListener('click', async function () {
           S.basculeChargement(true);
@@ -1702,15 +1775,38 @@
   /* 11. Import                                                           */
   /* =================================================================== */
   const imports = {
-    titre: 'Importer un projet',
-    sousTitre: 'Chargement d\'un cadre logique et d\'un budget depuis Excel ou Word',
-    actions: () => '<button class="btn btn-primaire btn-petit" data-barre="modele">⬇️ Télécharger le modèle Excel</button>',
+    titre: 'Importer et transférer',
+    sousTitre: 'Chargement depuis Excel, Word ou une sauvegarde SEPIA, et transfert de projets',
+    actions: () => '<button class="btn btn-primaire btn-petit" data-barre="modele">⬇️ Modèle Excel</button>' +
+      '<button class="btn btn-secondaire btn-petit" data-barre="sauvegarde">💾 Sauvegarder ce projet</button>' +
+      '<button class="btn btn-secondaire btn-petit" data-barre="portefeuille">🗄️ Sauvegarder le portefeuille</button>',
     gestionnairesBarre: {
-      modele: () => S.API.telecharger('/api/exports/modele-import')
+      modele: () => S.API.telecharger('/api/exports/modele-import'),
+      sauvegarde: () => S.API.telecharger('/api/exports/' + projet() + '/projet-json'),
+      portefeuille: () => S.API.telecharger('/api/exports/portefeuille/json')
     },
     rendre: async function (conteneur) {
       if (!projet()) { conteneur.innerHTML = exigeProjet(); return; }
       conteneur.innerHTML =
+        S.carte('Sauvegarde et transfert de projets SEPIA',
+          '<p style="font-size:.85rem">La sauvegarde <strong>JSON</strong> contient l\'intégralité ' +
+          'du projet — cadre logique, zones, indicateurs, cibles, réalisations désagrégées, ' +
+          'activités, budget, risques, hypothèses, parties prenantes, matrice RACI et ' +
+          'questionnaires. Elle se recharge à l\'identique sur cette instance ou sur une autre. ' +
+          'Le classeur <strong>Excel de transfert</strong> reprend la même structure que le modèle ' +
+          'd\'import : il se retravaille dans un tableur puis se recharge, mais ne contient pas ' +
+          'les questionnaires.</p>' +
+          '<div class="barre-outils">' +
+          '<button class="btn btn-primaire btn-petit" data-transfert="projet-json">💾 Sauvegarde JSON du projet</button>' +
+          '<button class="btn btn-secondaire btn-petit" data-transfert="projet-excel">📊 Classeur Excel de transfert</button>' +
+          '<button class="btn btn-secondaire btn-petit" data-transfert="portefeuille-json">🗄️ Sauvegarde JSON du portefeuille complet</button>' +
+          '</div>' +
+          '<div class="zone-depot" id="depot-json"><span class="icone">💾</span>' +
+          'Cliquez ou déposez ici une sauvegarde SEPIA (.json) — projet unique ou portefeuille</div>' +
+          '<label style="display:flex;gap:.4rem;align-items:center;margin-top:.8rem;font-size:.82rem">' +
+          '<input type="checkbox" id="remplacer-projet"> Remplacer un projet existant portant le ' +
+          'même code (restauration de sauvegarde). Sinon, le projet est ajouté avec un code suffixé.</label>' +
+          '<div id="rapport-json" style="margin-top:1rem"></div>') +
         S.carte('1. Import depuis Excel',
           '<p style="font-size:.84rem">Chargez un classeur contenant tout ou partie des onglets suivants : ' +
           '<strong>Cadre logique</strong>, <strong>Indicateurs</strong>, <strong>Cibles</strong>, ' +
@@ -1735,6 +1831,17 @@
       document.getElementById('btn-modele').addEventListener('click',
         () => S.API.telecharger('/api/exports/modele-import'));
 
+      conteneur.querySelectorAll('[data-transfert]').forEach(function (bouton) {
+        bouton.addEventListener('click', function () {
+          const chemins = {
+            'projet-json': '/api/exports/' + projet() + '/projet-json',
+            'projet-excel': '/api/exports/' + projet() + '/projet-transfert-excel',
+            'portefeuille-json': '/api/exports/portefeuille/json'
+          };
+          S.API.telecharger(chemins[bouton.dataset.transfert]);
+        });
+      });
+
       function brancherDepot(idZone, accept, surFichier) {
         const zone = document.getElementById(idZone);
         const champ = document.createElement('input');
@@ -1752,6 +1859,45 @@
           if (e.dataTransfer.files.length) surFichier(e.dataTransfer.files[0]);
         });
       }
+
+      brancherDepot('depot-json', '.json', async function (fichier) {
+        const donnees = new FormData();
+        donnees.append('fichier', fichier);
+        donnees.append('remplacer_existant',
+          document.getElementById('remplacer-projet').checked ? 'true' : 'false');
+        S.basculeChargement(true);
+        try {
+          const r = await S.API.televerser('/api/imports/sepia-json', donnees);
+          const projets = r.projets || [];
+          document.getElementById('rapport-json').innerHTML =
+            '<div class="alerte alerte-info"><span class="type">Import réussi</span><span>' +
+            (r.format === 'SEPIA-PORTEFEUILLE' ?
+              r.importes + ' projet(s) importés' + (r.en_echec ? ', ' + r.en_echec + ' en échec' : '') :
+              '1 projet importé') + '</span></div>' +
+            projets.map(function (p) {
+              if (p.erreur) {
+                return '<div class="alerte alerte-danger"><span class="type">' +
+                  ech(p.code_origine || '—') + '</span><span>' + ech(p.erreur) + '</span></div>';
+              }
+              return '<div class="carte" style="box-shadow:none;border:1px solid var(--gris-clair)">' +
+                '<strong>' + ech(p.code_importe) + '</strong>' +
+                (p.code_importe !== p.code_origine ?
+                  ' <span style="color:#EA8600">(code d\'origine : ' + ech(p.code_origine) + ')</span>' : '') +
+                S.tableau([
+                  { titre: 'Catégorie', rendu: (l) => ech(l.cle) },
+                  { titre: 'Enregistrements créés', classe: 'centre', rendu: (l) => l.valeur }
+                ], Object.keys(p.cree || {}).map((k) => ({ id: k, cle: k, valeur: p.cree[k] }))) +
+                (p.avertissements || []).map((a) => '<div class="alerte alerte-warning"><span>' +
+                  ech(a) + '</span></div>').join('') + '</div>';
+            }).join('');
+          S.notifier('Sauvegarde SEPIA importée.', 'succes');
+          await global.Application.rechargerProjets();
+        } catch (erreur) {
+          document.getElementById('rapport-json').innerHTML =
+            '<div class="alerte alerte-danger"><span class="type">Échec</span><span>' +
+            ech(erreur.message) + '</span></div>';
+        } finally { S.basculeChargement(false); }
+      });
 
       brancherDepot('depot-excel', '.xlsx', async function (fichier) {
         const donnees = new FormData();
@@ -1838,7 +1984,8 @@
             '<h4>' + ech(l.libelle) + '</h4><p>' + ech(l.description) + '</p>' +
             '<button class="btn btn-primaire btn-petit" data-livrable="' + l.cle + '">⬇️ Générer</button></div>';
         }).join('') + '</div>',
-        '', 'Tous les documents sont produits à partir des données saisies dans la plateforme et sont modifiables après téléchargement.');
+        '<button class="btn btn-secondaire btn-petit" id="livrable-portefeuille">🗄️ Sauvegarde du portefeuille complet</button>',
+        'Tous les documents sont produits à partir des données saisies dans la plateforme et sont modifiables après téléchargement.');
 
       conteneur.querySelectorAll('[data-livrable]').forEach(function (bouton) {
         bouton.addEventListener('click', function () {
@@ -1847,6 +1994,11 @@
           S.API.telecharger('/api/exports/' + projet() + '/' + cle);
         });
       });
+      const boutonPortefeuille = document.getElementById('livrable-portefeuille');
+      if (boutonPortefeuille) {
+        boutonPortefeuille.addEventListener('click',
+          () => S.API.telecharger('/api/exports/portefeuille/json'));
+      }
     }
   };
 
@@ -2342,11 +2494,12 @@
 
       const fondActif = localStorage.getItem('sepia_fond_carte') !== '0';
       html += S.carte('Carte de couverture du projet',
-        G.carte(c.zones.filter((z) => z.id !== null), { fond: fondActif }),
+        '<div id="graphique-carte">' +
+        G.carte(c.zones.filter((z) => z.id !== null), { fond: fondActif }) + '</div>',
         '<label style="display:flex;align-items:center;gap:.35rem;font-size:.76rem;color:#5F6368">' +
         '<input type="checkbox" id="bascule-fond-carte"' + (fondActif ? ' checked' : '') +
-        '> Fond de carte</label>',
-        'Chaque zone est figurée par un cercle dont la surface représente les bénéficiaires atteints et la couleur le taux de couverture.');
+        '> Fond de carte</label>' + S.boutonsImage('carte', 'la carte de couverture'),
+        'Chaque zone est figurée par un cercle dont la surface représente les bénéficiaires atteints et la couleur le taux de couverture. L\'image exportée contient les symboles, le graticule et l\'échelle, sans le fond de carte.');
 
       if (actives.length) {
         html += S.carte('Bénéficiaires atteints par zone',
@@ -2417,6 +2570,9 @@
       }
       G.surveillerFondCarte(conteneur, function () {
         if (bascule) bascule.checked = false;
+      });
+      S.brancherBoutonsImage(conteneur, {
+        carte: { element: document.getElementById('graphique-carte'), nom: 'Carte_de_couverture' }
       });
 
       S.brancherActions(conteneur, {

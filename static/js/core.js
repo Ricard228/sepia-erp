@@ -354,6 +354,108 @@
       contenu + '</section>';
   }
 
+  /* --------------------------------------------- Export des graphiques en image */
+  /* Les graphiques étant produits en SVG autonome — couleurs en attributs, aucune
+     police externe —, ils sont exportables sans bibliothèque : soit tels quels en
+     .svg (vectoriel, redimensionnable sans perte), soit rastérisés dans un canevas
+     pour produire un .png directement insérable dans un rapport. */
+  function exporterGraphique(source, nomFichier, format) {
+    const svg = typeof source === 'string' ? document.querySelector(source) :
+      (source && source.tagName === 'svg' ? source : source && source.querySelector('svg'));
+    if (!svg) { notifier('Aucun graphique à exporter dans cette section.', 'erreur'); return; }
+
+    const clone = svg.cloneNode(true);
+    const rect = svg.getBoundingClientRect();
+    const boite = svg.viewBox && svg.viewBox.baseVal && svg.viewBox.baseVal.width
+      ? { largeur: svg.viewBox.baseVal.width, hauteur: svg.viewBox.baseVal.height }
+      : { largeur: rect.width || 900, hauteur: rect.height || 500 };
+    clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+    clone.setAttribute('width', boite.largeur);
+    clone.setAttribute('height', boite.hauteur);
+    clone.setAttribute('style', 'background:#ffffff;font-family:Segoe UI,Roboto,Arial,sans-serif');
+    // Fond blanc explicite : sans lui, le PNG hérite d'un fond transparent qui
+    // rend le texte sombre illisible dans un document imprimé.
+    const fond = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    fond.setAttribute('width', '100%');
+    fond.setAttribute('height', '100%');
+    fond.setAttribute('fill', '#ffffff');
+    clone.insertBefore(fond, clone.firstChild);
+
+    const texte = new XMLSerializer().serializeToString(clone);
+    const horodatage = new Date().toISOString().substring(0, 10);
+    const nom = (nomFichier || 'graphique') + '_' + horodatage;
+
+    if (format === 'svg') {
+      const blob = new Blob([texte], { type: 'image/svg+xml;charset=utf-8' });
+      telechargerBlob(blob, nom + '.svg');
+      return;
+    }
+
+    const image = new Image();
+    const donnees = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(texte);
+    basculeChargement(true);
+    image.onload = function () {
+      try {
+        const echelle = 2;   // rendu au double pour rester net à l'impression
+        const canevas = document.createElement('canvas');
+        canevas.width = Math.round(boite.largeur * echelle);
+        canevas.height = Math.round(boite.hauteur * echelle);
+        const contexte = canevas.getContext('2d');
+        contexte.fillStyle = '#ffffff';
+        contexte.fillRect(0, 0, canevas.width, canevas.height);
+        contexte.setTransform(echelle, 0, 0, echelle, 0, 0);
+        contexte.drawImage(image, 0, 0);
+        canevas.toBlob(function (blob) {
+          basculeChargement(false);
+          if (!blob) { notifier('La conversion en image a échoué.', 'erreur'); return; }
+          telechargerBlob(blob, nom + '.png');
+        }, 'image/png');
+      } catch (erreur) {
+        basculeChargement(false);
+        notifier('Export impossible : ' + erreur.message, 'erreur');
+      }
+    };
+    image.onerror = function () {
+      basculeChargement(false);
+      notifier('Le graphique n\'a pas pu être converti en image. Essayez l\'export SVG.', 'erreur');
+    };
+    image.src = donnees;
+  }
+
+  function telechargerBlob(blob, nom) {
+    const url = URL.createObjectURL(blob);
+    const lien = document.createElement('a');
+    lien.href = url;
+    lien.download = nom;
+    document.body.appendChild(lien);
+    lien.click();
+    lien.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+    notifier('Image « ' + nom + ' » téléchargée.', 'succes');
+  }
+
+  /* Boutons d'export à placer dans l'en-tête d'une carte contenant un graphique. */
+  function boutonsImage(cle, libelle) {
+    return '<button class="btn btn-secondaire btn-petit" data-image="' + cle +
+      '" data-format="png" title="Télécharger ' + echapper(libelle) +
+      ' en image PNG">🖼️ PNG</button>' +
+      '<button class="btn btn-secondaire btn-petit" data-image="' + cle +
+      '" data-format="svg" title="Télécharger ' + echapper(libelle) +
+      ' en image vectorielle SVG">📐 SVG</button>';
+  }
+
+  function brancherBoutonsImage(conteneur, cibles) {
+    conteneur.querySelectorAll('[data-image]').forEach(function (bouton) {
+      bouton.addEventListener('click', function () {
+        const cible = cibles[bouton.dataset.image];
+        if (!cible) return;
+        exporterGraphique(typeof cible === 'string' ? document.querySelector(cible) : cible.element,
+          typeof cible === 'string' ? bouton.dataset.image : cible.nom,
+          bouton.dataset.format);
+      });
+    });
+  }
+
   function vide(message, icone) {
     return '<div class="vide"><span class="icone">' + (icone || '📭') + '</span>' +
       echapper(message) + '</div>';
@@ -365,6 +467,8 @@
     ouvrirModale: ouvrirModale, fermerModale: fermerModale, confirmer: confirmer,
     construireFormulaire: construireFormulaire, lireFormulaire: lireFormulaire,
     formulaireModal: formulaireModal, tableau: tableau, brancherActions: brancherActions,
-    kpi: kpi, carte: carte, vide: vide, deconnexion: deconnexion
+    kpi: kpi, carte: carte, vide: vide, deconnexion: deconnexion,
+    exporterGraphique: exporterGraphique, boutonsImage: boutonsImage,
+    brancherBoutonsImage: brancherBoutonsImage, telechargerBlob: telechargerBlob
   };
 })(window);

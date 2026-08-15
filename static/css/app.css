@@ -324,6 +324,7 @@ table.tableau .actions { white-space: nowrap; text-align: right; }
 .format-Excel { background: #E6F4EA; color: #0F9D58; }
 .format-Word { background: #E8F0FE; color: #1F4E79; }
 .format-ZIP { background: #FEF7E0; color: #EA8600; }
+.format-JSON { background: #F3E5F5; color: #7B1FA2; }
 
 .zone-depot {
   border: 2px dashed var(--bleu-clair); border-radius: 12px; padding: 1.8rem 1rem; text-align: center;

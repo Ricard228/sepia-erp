@@ -12,7 +12,8 @@ from sqlalchemy.orm import Session
 
 from ..config import CATEGORIES_DESAGREGATION, MODALITES_DESAGREGATION
 from ..models import (Activity, Assumption, BudgetLine, Indicator, IndicatorActual,
-                      IndicatorTarget, LogframeElement, Project, Risk, Zone)
+                      IndicatorTarget, LogframeElement, Project, RaciAssignment, Risk,
+                      Stakeholder, Zone)
 
 
 # ---------------------------------------------------------------------------
@@ -116,13 +117,20 @@ def _index_colonnes(entetes: List[Any], correspondances: Dict[str, List[str]]) -
 
 
 def _cellule(ligne: Tuple, colonnes: Dict[str, int], champ: str) -> Any:
+    """Valeur d'une cellule, chaîne vide ramenée à None.
+
+    Une valeur numérique nulle est une donnée à part entière — une cible de
+    zéro, un effectif de zéro — et doit être conservée telle quelle : seules
+    les chaînes vides sont traitées comme absentes.
+    """
     index = colonnes.get(champ)
     if index is None or index >= len(ligne):
         return None
     valeur = ligne[index]
     if isinstance(valeur, str):
         valeur = valeur.strip()
-    return valeur or None
+        return valeur or None
+    return valeur
 
 
 # ---------------------------------------------------------------------------
@@ -209,6 +217,23 @@ CORRESPONDANCES = {
         "year": ["annee"],
         "milestone": ["jalon"],
         "deliverable": ["livrable", "produit attendu"],
+        "dependencies": ["activites prerequises", "antecedents", "predecesseurs",
+                         "activites anterieures"],
+        "duration_days": ["duree imposee", "duree jours", "duree"],
+        "wbs_code": ["code wbs", "wbs"],
+    },
+    "parties_prenantes": {
+        "code": ["code"],
+        "name": ["partie prenante", "acteur", "fonction", "nom", "libelle", "structure"],
+        "organisation": ["organisation", "structure de rattachement"],
+        "category": ["categorie", "type"],
+        "contact": ["contact", "telephone", "courriel"],
+    },
+    "raci": {
+        "activity": ["code activite", "activite"],
+        "stakeholder": ["code partie prenante", "partie prenante", "acteur"],
+        "role": ["role", "raci"],
+        "comment": ["commentaire", "observation"],
     },
     "budget": {
         "code": ["code", "code ligne"],
@@ -264,6 +289,8 @@ ALIAS_FEUILLES = {
     "hypotheses": ["hypotheses", "hypothese", "conditions critiques"],
     "zones": ["zones", "zone", "zones d intervention", "localites", "sites",
               "zone d intervention"],
+    "parties_prenantes": ["parties prenantes", "partie prenante", "acteurs", "intervenants"],
+    "raci": ["raci", "matrice raci", "responsabilites", "matrice des responsabilites"],
 }
 
 
@@ -366,7 +393,8 @@ def importer_excel(db: Session, contenu: bytes, project: Project,
             db.query(modele).filter(modele.indicator_id.in_(
                 db.query(Indicator.id).filter(Indicator.project_id == project.id))).delete(
                 synchronize_session=False)
-        for modele in (BudgetLine, Activity, Indicator, Assumption, Risk, LogframeElement, Zone):
+        for modele in (RaciAssignment, Stakeholder, BudgetLine, Activity, Indicator, Assumption,
+                       Risk, LogframeElement, Zone):
             db.query(modele).filter(modele.project_id == project.id).delete(synchronize_session=False)
         db.flush()
 
@@ -565,6 +593,10 @@ def importer_excel(db: Session, contenu: bytes, project: Project,
                 activite.start_date.year if activite.start_date else None)
             activite.milestone = _booleen(_cellule(ligne, colonnes, "milestone"))
             activite.deliverable = _cellule(ligne, colonnes, "deliverable")
+            activite.dependencies = _cellule(ligne, colonnes, "dependencies")
+            duree = _valeur_numerique(_cellule(ligne, colonnes, "duration_days"))
+            activite.duration_days = int(duree) if duree else None
+            activite.wbs_code = _cellule(ligne, colonnes, "wbs_code")
             activite.order_index = position
             if code:
                 activites_par_code[str(code)] = activite
@@ -716,6 +748,75 @@ def importer_excel(db: Session, contenu: bytes, project: Project,
             nombre += 1
         db.flush()
         compter("hypotheses", nombre)
+
+    # --- 8. Parties prenantes et matrice RACI -----------------------------
+    parties_par_code: Dict[str, Stakeholder] = {
+        p.code: p for p in db.query(Stakeholder).filter(
+            Stakeholder.project_id == project.id).all() if p.code}
+    feuille = _trouver_feuille(classeur, "parties_prenantes")
+    if feuille is not None:
+        entetes, corps = _lignes_utiles(feuille)
+        colonnes = _index_colonnes(entetes, CORRESPONDANCES["parties_prenantes"])
+        rapport["feuilles_traitees"].append(feuille.title)
+        nombre = 0
+        for position, ligne in enumerate(corps):
+            nom = _cellule(ligne, colonnes, "name")
+            if not nom:
+                continue
+            code = _cellule(ligne, colonnes, "code")
+            partie = parties_par_code.get(str(code)) if code else None
+            if partie is None:
+                partie = Stakeholder(project_id=project.id)
+                db.add(partie)
+                nombre += 1
+            partie.code = str(code) if code else None
+            partie.name = str(nom)
+            partie.organisation = _cellule(ligne, colonnes, "organisation")
+            partie.category = _cellule(ligne, colonnes, "category")
+            partie.contact = _cellule(ligne, colonnes, "contact")
+            partie.order_index = position
+            db.flush()
+            if code:
+                parties_par_code[str(code)] = partie
+        compter("parties_prenantes", nombre)
+
+    feuille = _trouver_feuille(classeur, "raci")
+    if feuille is not None:
+        entetes, corps = _lignes_utiles(feuille)
+        colonnes = _index_colonnes(entetes, CORRESPONDANCES["raci"])
+        rapport["feuilles_traitees"].append(feuille.title)
+        nombre = 0
+        # Les affectations existantes sont chargées une seule fois : interroger la
+        # base à l'intérieur de la boucle, entre deux ajouts, désynchronise la
+        # session SQLAlchemy.
+        affectations_existantes = {
+            (a.activity_id, a.stakeholder_id): a
+            for a in db.query(RaciAssignment).filter(
+                RaciAssignment.project_id == project.id).all()}
+        for ligne in corps:
+            code_activite = _cellule(ligne, colonnes, "activity")
+            code_partie = _cellule(ligne, colonnes, "stakeholder")
+            role = str(_cellule(ligne, colonnes, "role") or "").strip().upper()[:1]
+            activite = activites_par_code.get(str(code_activite)) if code_activite else None
+            partie = parties_par_code.get(str(code_partie)) if code_partie else None
+            if activite is None or partie is None or role not in ("R", "A", "C", "I"):
+                if code_activite or code_partie:
+                    rapport["avertissements"].append(
+                        f"RACI : ligne ignorée (activité « {code_activite} », acteur "
+                        f"« {code_partie} », rôle « {role} »).")
+                continue
+            existante = affectations_existantes.get((activite.id, partie.id))
+            if existante:
+                existante.role = role
+            else:
+                nouvelle = RaciAssignment(project_id=project.id, activity_id=activite.id,
+                                          stakeholder_id=partie.id, role=role,
+                                          comment=_cellule(ligne, colonnes, "comment"))
+                db.add(nouvelle)
+                affectations_existantes[(activite.id, partie.id)] = nouvelle
+                nombre += 1
+        db.flush()
+        compter("affectations_raci", nombre)
 
     db.commit()
     if not rapport["feuilles_traitees"]:

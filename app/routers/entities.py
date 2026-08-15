@@ -314,6 +314,13 @@ def api_chemin_critique(project_id: int, db: Session = Depends(get_db),
     return planning.chemin_critique(db, project_id)
 
 
+@detail.get("/planning/courbe-avancement/{project_id}")
+def api_courbe_avancement(project_id: int, db: Session = Depends(get_db),
+                          user: User = Depends(current_user)):
+    """Courbe en S : engagement de ressources planifié et réalisé, mois par mois."""
+    return planning.courbe_avancement(db, project_id)
+
+
 @detail.get("/planning/wbs/{project_id}")
 def api_wbs(project_id: int, db: Session = Depends(get_db),
             user: User = Depends(current_user)):

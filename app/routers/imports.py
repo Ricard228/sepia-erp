@@ -1,4 +1,6 @@
-"""Import de projets depuis Excel ou Word, et alimentation par les données collectées."""
+"""Import de projets depuis Excel, Word ou sauvegarde JSON, et alimentation par
+les données collectées."""
+import json
 from io import BytesIO
 from typing import Any, Dict, List, Optional
 
@@ -10,7 +12,7 @@ from ..crud import ensure_project, log_action, serialize
 from ..database import get_db
 from ..models import Form, FormQuestion, FormSubmission, Indicator, IndicatorActual, Project, User
 from ..security import can_edit, can_manage
-from ..services import importer
+from ..services import importer, portability
 from ..services.xlsform import _nom_technique
 
 router = APIRouter(prefix="/api/imports", tags=["Imports"])
@@ -44,6 +46,41 @@ async def importer_excel(project_id: int, fichier: UploadFile = File(...),
         raise HTTPException(status_code=422,
                             detail=f"Lecture impossible : {type(exc).__name__} — {exc}")
     log_action(db, user, "IMPORT_EXCEL", "Project", projet.id, projet.id, str(rapport["crees"]))
+    db.commit()
+    return rapport
+
+
+@router.post("/sepia-json")
+async def importer_sauvegarde_json(fichier: UploadFile = File(...),
+                                   remplacer_existant: bool = FormField(False),
+                                   db: Session = Depends(get_db),
+                                   user: User = Depends(can_manage)):
+    """Charge une sauvegarde SEPIA (.json) : un projet unique ou un portefeuille entier.
+
+    Le projet est recréé intégralement — cadre logique, zones, indicateurs, cibles,
+    réalisations désagrégées, activités, budget, risques, hypothèses, parties
+    prenantes, matrice RACI, questionnaires. Les identifiants sont réattribués et
+    les références internes réécrites, si bien que le fichier peut provenir d'une
+    autre instance de la plateforme.
+    """
+    if not (fichier.filename or "").lower().endswith(".json"):
+        raise HTTPException(status_code=422, detail="Format attendu : .json")
+    contenu = await _lire(fichier)
+    try:
+        donnees = json.loads(contenu.decode("utf-8-sig"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=422, detail=f"Fichier JSON illisible : {exc}")
+    try:
+        rapport = portability.importer_portefeuille(db, donnees, remplacer_existant)
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=422, detail=str(exc))
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(status_code=422,
+                            detail=f"Import impossible : {type(exc).__name__} — {exc}")
+    log_action(db, user, "IMPORT_JSON", "Project", 0, None,
+               f"{len(rapport.get('projets', []))} projet(s)")
     db.commit()
     return rapport
 

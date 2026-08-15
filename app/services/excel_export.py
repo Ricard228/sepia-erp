@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from ..config import LIBELLES_NIVEAUX
 from ..models import (Activity, Assumption, BudgetLine, Form, FormQuestion, Indicator,
-                      LogframeElement, Project, Risk, Zone)
+                      LogframeElement, Project, RaciAssignment, Risk, Stakeholder, Zone)
 from . import analytics, planning
 
 BLEU = "#1F4E79"
@@ -1473,7 +1473,213 @@ def raci_xlsx(db: Session, project: Project) -> BytesIO:
 
 
 # ---------------------------------------------------------------------------
-# 15. Modèle d'import
+# 15. Classeur de transfert : projet complet au format d'import
+# ---------------------------------------------------------------------------
+def projet_transfert_xlsx(db: Session, project: Project) -> BytesIO:
+    """Export du projet dans la structure exacte du modèle d'import.
+
+    Ce classeur est donc réversible : il se relit tel quel par la fonction
+    d'import, ce qui permet de transférer un projet d'une instance à une autre,
+    de le retravailler hors ligne dans un tableur, ou d'en conserver une
+    sauvegarde lisible sans outil particulier.
+    """
+    buffer = BytesIO()
+    wb = xlsxwriter.Workbook(buffer, {"in_memory": True})
+    fmt = _formats(wb)
+
+    elements = _elements_tries(db, project.id)
+    parents = {e.id: e for e in elements}
+    zones = {z.id: z for z in db.query(Zone).filter(Zone.project_id == project.id).all()}
+    activites = db.query(Activity).filter(Activity.project_id == project.id).order_by(
+        Activity.order_index, Activity.code).all()
+    activites_par_id = {a.id: a for a in activites}
+    indicateurs = db.query(Indicator).filter(Indicator.project_id == project.id).order_by(
+        Indicator.code).all()
+
+    def ecrire(nom: str, entetes: List[str], lignes: List[List[Any]], largeurs=None):
+        ws = wb.add_worksheet(nom)
+        for col, titre in enumerate(entetes):
+            ws.write(0, col, titre, fmt["entete"])
+            ws.set_column(col, col, (largeurs[col] if largeurs else max(14, min(46, len(titre) + 8))))
+        for r, valeurs in enumerate(lignes, start=1):
+            for col, valeur in enumerate(valeurs):
+                ws.write(r, col, valeur if valeur is not None else "", fmt["cellule"])
+        ws.freeze_panes(1, 0)
+        ws.set_row(0, 30)
+        if lignes:
+            ws.autofilter(0, 0, len(lignes), len(entetes) - 1)
+
+    def iso(valeur):
+        return valeur.isoformat() if valeur else None
+
+    # Feuille d'identification du projet — relue à titre informatif.
+    ws = wb.add_worksheet("Projet")
+    ws.set_column(0, 0, 34)
+    ws.set_column(1, 1, 90)
+    ws.write(0, 0, "CLASSEUR DE TRANSFERT — PROJET COMPLET", fmt["titre"])
+    ws.write(1, 0, "Ce classeur respecte la structure du modèle d'import : il peut être rechargé "
+                   "tel quel dans SEPIA.", fmt["soustitre"])
+    ligne = 3
+    for libelle, valeur in [
+        ("Code du projet", project.code), ("Intitulé", project.title),
+        ("Acronyme", project.acronym), ("Secteur", project.sector), ("Pays", project.country),
+        ("Bailleur", project.donor), ("Agence d'exécution", project.executing_agency),
+        ("Date de démarrage", iso(project.start_date)), ("Date de clôture", iso(project.end_date)),
+        ("Statut", project.status), ("Devise", project.currency),
+        ("Budget total", project.total_budget),
+        ("Contrepartie nationale", project.counterpart_budget),
+        ("Population cible", project.target_population),
+        ("Indicateurs de processus affichés", "Oui" if project.show_process_indicators else "Non"),
+        ("Exporté le", date.today().isoformat()),
+    ]:
+        ws.write(ligne, 0, libelle, fmt["gras"])
+        ws.write(ligne, 1, valeur if valeur is not None else "", fmt["cellule"])
+        ligne += 1
+
+    ecrire("Cadre logique",
+           ["Niveau", "Code", "Code parent", "Énoncé du résultat", "Sources de vérification",
+            "Hypothèses", "Responsable"],
+           [[e.level, e.code, (parents.get(e.parent_id).code if parents.get(e.parent_id) else None),
+             e.statement, e.means_of_verification, e.assumptions, e.responsible]
+            for e in elements],
+           [14, 12, 14, 60, 40, 40, 22])
+
+    ecrire("Zones",
+           ["Code", "Zone", "Niveau", "Code parent", "Population", "Cible bénéficiaires",
+            "Latitude", "Longitude", "Responsable"],
+           [[z.code, z.name, z.level,
+             (zones.get(z.parent_id).code if zones.get(z.parent_id) else None),
+             z.population, z.beneficiaries_target, z.latitude, z.longitude, z.responsible]
+            for z in sorted(zones.values(), key=lambda x: (x.order_index or 0, x.name))])
+
+    ecrire("Indicateurs",
+           ["Code", "Libellé de l'indicateur", "Code résultat", "Niveau", "Type", "Unité",
+            "Mode de calcul", "Désagrégation", "Référence", "Date référence", "Cible finale",
+            "Date cible", "Sens", "Fréquence", "Source de données", "Méthode de collecte",
+            "Responsable", "Indicateur clé (Oui/Non)"],
+           [[i.code, i.name,
+             (parents.get(i.element_id).code if parents.get(i.element_id) else None),
+             i.level, i.indicator_type, i.unit, i.formula, ";".join(i.disaggregation or []),
+             i.baseline_value, iso(i.baseline_date), i.target_value, iso(i.target_date),
+             i.direction, i.frequency, i.data_source, i.collection_method, i.responsible,
+             "Oui" if i.is_key else "Non"] for i in indicateurs])
+
+    ecrire("Cibles",
+           ["Code indicateur", "Période", "Année", "Début période", "Fin période", "Valeur cible"],
+           [[i.code, t.period_label, t.year, iso(t.period_start), iso(t.period_end),
+             t.target_value] for i in indicateurs for t in
+            sorted(i.targets, key=lambda x: x.period_label or "")])
+
+    # Les réalisations reprennent la ventilation sous forme compacte, relue à l'import.
+    def compacter(valeurs):
+        if not valeurs:
+            return None
+        return ";".join(f"{categorie}:{modalite}={nombre:g}"
+                        for categorie, modalites in valeurs.items()
+                        if isinstance(modalites, dict)
+                        for modalite, nombre in modalites.items())
+
+    ecrire("Réalisations",
+           ["Code indicateur", "Période", "Année", "Date de référence", "Valeur réalisée",
+            "Zone", "Code activité", "Désagrégation", "Source", "Collecté par", "Statut"],
+           [[i.code, a.period_label, a.year, iso(a.reference_date), a.value,
+             (zones.get(a.zone_id).code if zones.get(a.zone_id) else None),
+             (activites_par_id.get(a.activity_id).code
+              if activites_par_id.get(a.activity_id) else None),
+             compacter(a.disaggregated_values), a.source, a.collected_by, a.validation_status]
+            for i in indicateurs for a in
+            sorted(i.actuals, key=lambda x: (x.period_label or "", x.id))])
+
+    ecrire("Activités",
+           ["Code", "Libellé de l'activité", "Code résultat", "Responsable", "Partenaires",
+            "Lieu", "Date début", "Date fin", "Avancement (%)", "Statut", "Coût prévu",
+            "Année", "Jalon (Oui/Non)", "Livrable", "Activités prérequises"],
+           [[a.code, a.name,
+             (parents.get(a.element_id).code if parents.get(a.element_id) else None),
+             a.responsible, a.partners, a.location, iso(a.start_date), iso(a.end_date),
+             a.progress, a.status, a.planned_cost, a.year, "Oui" if a.milestone else "Non",
+             a.deliverable, a.dependencies] for a in activites])
+
+    ecrire("Budget",
+           ["Code", "Libellé de la ligne", "Code activité", "Catégorie", "Unité", "Quantité",
+            "Coût unitaire", "Nombre", "T1", "T2", "T3", "T4", "Source de financement", "Année",
+            "Engagé", "Décaissé"],
+           [[l.code, l.label,
+             (activites_par_id.get(l.activity_id).code
+              if activites_par_id.get(l.activity_id) else None),
+             l.category, l.unit, l.quantity, l.unit_cost, l.frequency_count, l.q1, l.q2, l.q3,
+             l.q4, l.funding_source, l.year, l.committed, l.disbursed]
+            for l in db.query(BudgetLine).filter(
+                BudgetLine.project_id == project.id).order_by(BudgetLine.code).all()])
+
+    ecrire("Risques",
+           ["Code", "Catégorie", "Risque identifié", "Cause", "Conséquence", "Probabilité (1-5)",
+            "Impact (1-5)", "Mesures d'atténuation", "Plan de contingence", "Responsable",
+            "Statut", "Date de revue"],
+           [[r.code, r.category, r.title, r.cause, r.consequence, r.probability, r.impact,
+             r.mitigation, r.contingency, r.owner, r.status, iso(r.review_date)]
+            for r in db.query(Risk).filter(Risk.project_id == project.id).order_by(Risk.code).all()])
+
+    ecrire("Hypothèses",
+           ["Code", "Niveau", "Énoncé de l'hypothèse", "Criticité", "Statut de validation",
+            "Méthode de vérification", "Responsable", "Date de revue"],
+           [[h.code, h.level, h.statement, h.criticality, h.validation_status,
+             h.verification_method, h.responsible, iso(h.review_date)]
+            for h in db.query(Assumption).filter(
+                Assumption.project_id == project.id).order_by(Assumption.code).all()])
+
+    ecrire("Parties prenantes",
+           ["Code", "Partie prenante", "Organisation", "Catégorie", "Contact"],
+           [[p.code, p.name, p.organisation, p.category, p.contact]
+            for p in db.query(Stakeholder).filter(
+                Stakeholder.project_id == project.id).order_by(Stakeholder.order_index).all()])
+
+    parties = {p.id: p for p in db.query(Stakeholder).filter(
+        Stakeholder.project_id == project.id).all()}
+    ecrire("RACI",
+           ["Code activité", "Code partie prenante", "Rôle", "Commentaire"],
+           [[(activites_par_id.get(a.activity_id).code
+              if activites_par_id.get(a.activity_id) else None),
+             (parties.get(a.stakeholder_id).code if parties.get(a.stakeholder_id) else None),
+             a.role, a.comment]
+            for a in db.query(RaciAssignment).filter(
+                RaciAssignment.project_id == project.id).all()])
+
+    ws = wb.add_worksheet("LISEZ-MOI")
+    ws.set_column(0, 0, 118)
+    notice = [
+        "CLASSEUR DE TRANSFERT SEPIA",
+        "",
+        f"Projet : {project.code} — {project.title}",
+        f"Exporté le {date.today().strftime('%d/%m/%Y')}.",
+        "",
+        "USAGE",
+        "  • Ce classeur reprend exactement la structure du modèle d'import de la plateforme.",
+        "  • Il peut être rechargé tel quel — sur cette instance ou sur une autre — par le menu",
+        "    « Importer » > « Import depuis Excel ».",
+        "  • Il peut être retravaillé hors ligne dans un tableur, puis réimporté.",
+        "",
+        "LIMITES DU FORMAT TABLEUR",
+        "  • Les questionnaires et les réponses collectées ne figurent pas dans ce classeur.",
+        "  • Pour une sauvegarde intégrale — questionnaires compris — et une restitution à",
+        "    l'identique, utilisez l'export JSON « Projet complet (SEPIA) ».",
+        "",
+        "CONVENTIONS",
+        "  • Les liens entre feuilles se font par les codes : Code parent, Code résultat,",
+        "    Code activité, Zone, Code partie prenante.",
+        "  • La ventilation des réalisations est écrite de façon compacte, par exemple :",
+        "    Sexe:Femme=210;Sexe:Homme=255",
+        "  • Les dates sont au format AAAA-MM-JJ.",
+    ]
+    for index, texte in enumerate(notice):
+        ws.write(index, 0, texte, fmt["titre"] if index == 0 else fmt["wrap"])
+    wb.close()
+    buffer.seek(0)
+    return buffer
+
+
+# ---------------------------------------------------------------------------
+# 16. Modèle d'import
 # ---------------------------------------------------------------------------
 def modele_import_xlsx() -> BytesIO:
     """Classeur type à remplir puis à réimporter dans SEPIA."""
