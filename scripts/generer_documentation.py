@@ -1,0 +1,1338 @@
+"""Génère la documentation Word de la plateforme SEPIA.
+
+Usage :  python scripts/generer_documentation.py [chemin_de_sortie.docx]
+Le document produit décrit l'ensemble des fonctionnalités, la méthodologie de
+suivi-évaluation intégrée, l'architecture technique, le guide d'utilisation et
+la procédure de déploiement.
+"""
+import os
+import sys
+from datetime import date
+
+from docx import Document
+from docx.enum.section import WD_SECTION
+from docx.enum.table import WD_TABLE_ALIGNMENT
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
+from docx.shared import Cm, Pt, RGBColor
+
+RACINE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, RACINE)
+
+from app.config import APP_LONG_NAME, APP_NAME, APP_VERSION  # noqa: E402
+
+BLEU = RGBColor(0x1F, 0x4E, 0x79)
+BLEU_MOYEN = RGBColor(0x2E, 0x75, 0xB6)
+GRIS = RGBColor(0x55, 0x55, 0x55)
+MOIS_FR = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août",
+           "septembre", "octobre", "novembre", "décembre"]
+
+
+# ---------------------------------------------------------------------------
+# Utilitaires de mise en forme
+# ---------------------------------------------------------------------------
+def ombrer(cellule, couleur_hex):
+    shd = OxmlElement("w:shd")
+    shd.set(qn("w:val"), "clear")
+    shd.set(qn("w:fill"), couleur_hex)
+    cellule._tc.get_or_add_tcPr().append(shd)
+
+
+def texte_cellule(cellule, texte, gras=False, taille=9, blanc=False, centre=False):
+    cellule.text = ""
+    paragraphe = cellule.paragraphs[0]
+    paragraphe.paragraph_format.space_after = Pt(2)
+    if centre:
+        paragraphe.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run = paragraphe.add_run("" if texte is None else str(texte))
+    run.bold = gras
+    run.font.size = Pt(taille)
+    if blanc:
+        run.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
+
+
+def tableau(document, entetes, lignes, largeurs=None, taille=9):
+    table = document.add_table(rows=1, cols=len(entetes))
+    table.style = "Table Grid"
+    table.alignment = WD_TABLE_ALIGNMENT.CENTER
+    for index, titre in enumerate(entetes):
+        cellule = table.rows[0].cells[index]
+        ombrer(cellule, "1F4E79")
+        texte_cellule(cellule, titre, gras=True, blanc=True, centre=True, taille=taille)
+        if largeurs:
+            cellule.width = Cm(largeurs[index])
+    for ligne in lignes:
+        cellules = table.add_row().cells
+        for index, valeur in enumerate(ligne):
+            texte_cellule(cellules[index], valeur, taille=taille,
+                          gras=(index == 0 and len(entetes) > 2))
+            if largeurs:
+                cellules[index].width = Cm(largeurs[index])
+    document.add_paragraph()
+    return table
+
+
+def titre1(document, texte):
+    h = document.add_heading(texte, level=1)
+    h.runs[0].font.color.rgb = BLEU
+    h.runs[0].font.size = Pt(16)
+    return h
+
+
+def titre2(document, texte):
+    h = document.add_heading(texte, level=2)
+    h.runs[0].font.color.rgb = BLEU_MOYEN
+    h.runs[0].font.size = Pt(13)
+    return h
+
+
+def titre3(document, texte):
+    h = document.add_heading(texte, level=3)
+    h.runs[0].font.color.rgb = BLEU_MOYEN
+    h.runs[0].font.size = Pt(11)
+    return h
+
+
+def para(document, texte, italique=False, taille=10.5, justifie=True):
+    p = document.add_paragraph()
+    if justifie:
+        p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+    run = p.add_run(texte)
+    run.italic = italique
+    run.font.size = Pt(taille)
+    return p
+
+
+def puce(document, texte, taille=10):
+    p = document.add_paragraph(style="List Bullet")
+    p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+    run = p.add_run(texte)
+    run.font.size = Pt(taille)
+    return p
+
+
+def numero(document, texte, taille=10):
+    p = document.add_paragraph(style="List Number")
+    p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+    run = p.add_run(texte)
+    run.font.size = Pt(taille)
+    return p
+
+
+def encadre(document, titre_encadre, texte):
+    table = document.add_table(rows=1, cols=1)
+    table.style = "Table Grid"
+    cellule = table.rows[0].cells[0]
+    ombrer(cellule, "DCE6F1")
+    cellule.text = ""
+    p = cellule.paragraphs[0]
+    run = p.add_run(titre_encadre + " — ")
+    run.bold = True
+    run.font.size = Pt(9.5)
+    run.font.color.rgb = BLEU
+    run2 = p.add_run(texte)
+    run2.font.size = Pt(9.5)
+    document.add_paragraph()
+
+
+def code(document, lignes):
+    for ligne in lignes:
+        p = document.add_paragraph()
+        p.paragraph_format.space_after = Pt(0)
+        p.paragraph_format.left_indent = Cm(0.6)
+        run = p.add_run(ligne)
+        run.font.name = "Consolas"
+        run.font.size = Pt(8.5)
+        run.font.color.rgb = RGBColor(0x1F, 0x29, 0x33)
+    document.add_paragraph()
+
+
+def pied_de_page(document, texte):
+    for section in document.sections:
+        paragraphe = section.footer.paragraphs[0]
+        paragraphe.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        paragraphe.text = ""
+        run = paragraphe.add_run(texte)
+        run.font.size = Pt(7.5)
+        run.font.color.rgb = GRIS
+
+
+# ---------------------------------------------------------------------------
+# Construction du document
+# ---------------------------------------------------------------------------
+def construire(chemin_sortie: str) -> str:
+    document = Document()
+    section = document.sections[0]
+    section.left_margin = section.right_margin = Cm(2.2)
+    section.top_margin = section.bottom_margin = Cm(2)
+    style = document.styles["Normal"]
+    style.font.name = "Calibri"
+    style.font.size = Pt(10.5)
+
+    aujourdhui = date.today()
+    date_fr = f"{aujourdhui.day} {MOIS_FR[aujourdhui.month - 1]} {aujourdhui.year}"
+
+    # ---------------------------------------------------------------- Garde
+    for _ in range(4):
+        document.add_paragraph()
+    p = document.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run = p.add_run("PLATEFORME " + APP_NAME)
+    run.bold = True
+    run.font.size = Pt(40)
+    run.font.color.rgb = BLEU
+    p = document.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run = p.add_run(APP_LONG_NAME)
+    run.font.size = Pt(13)
+    run.italic = True
+    run.font.color.rgb = GRIS
+    document.add_paragraph()
+    p = document.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run = p.add_run("\nERP de planification et de suivi-évaluation\ndes projets et programmes "
+                    "de développement")
+    run.bold = True
+    run.font.size = Pt(18)
+    run.font.color.rgb = BLEU_MOYEN
+    for _ in range(3):
+        document.add_paragraph()
+    p = document.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run = p.add_run("DOCUMENT DE DESCRIPTION FONCTIONNELLE ET TECHNIQUE")
+    run.bold = True
+    run.font.size = Pt(14)
+    for _ in range(5):
+        document.add_paragraph()
+    tableau(document,
+            ["Rubrique", "Information"],
+            [["Intitulé de la solution", f"{APP_NAME} — {APP_LONG_NAME}"],
+             ["Nature", "Application web et mobile (ERP de suivi-évaluation)"],
+             ["Version documentée", APP_VERSION],
+             ["Technologies", "Python 3.12 · FastAPI · SQLAlchemy · PostgreSQL · "
+                              "JavaScript natif (sans dépendance externe)"],
+             ["Dépôt de code source", "https://github.com/Ricard228/sepia-erp"],
+             ["Hébergement cible", "Render (service web + base PostgreSQL)"],
+             ["Date d'édition", date_fr]],
+            largeurs=[5.5, 11], taille=10)
+
+    document.add_page_break()
+
+    # -------------------------------------------------------------- Sommaire
+    titre1(document, "Sommaire")
+    sommaire = [
+        ("1.", "Contexte, justification et finalité de la plateforme"),
+        ("2.", "Périmètre fonctionnel"),
+        ("3.", "Architecture générale de la solution"),
+        ("4.", "Modèle de données"),
+        ("5.", "Description détaillée des modules"),
+        ("6.", "Méthodologie de suivi-évaluation intégrée"),
+        ("7.", "Import de données : Excel, Word, XLSForm, KoboToolbox"),
+        ("8.", "Livrables générés automatiquement"),
+        ("9.", "Fiches de collecte et questionnaires numériques"),
+        ("10.", "Tableaux de bord et connexion Power BI"),
+        ("11.", "Utilisateurs, rôles et sécurité"),
+        ("12.", "Guide de prise en main"),
+        ("13.", "Déploiement sur GitHub et Render"),
+        ("14.", "Interface de programmation (API)"),
+        ("15.", "Exploitation, maintenance et évolutions"),
+        ("A.", "Annexe 1 — Glossaire du suivi-évaluation"),
+        ("B.", "Annexe 2 — Arborescence du code source"),
+        ("C.", "Annexe 3 — Référentiels paramétrables"),
+    ]
+    for numero_chapitre, libelle in sommaire:
+        p = document.add_paragraph()
+        p.paragraph_format.space_after = Pt(3)
+        run = p.add_run(f"{numero_chapitre}\t{libelle}")
+        run.font.size = Pt(10.5)
+    document.add_page_break()
+
+    # ------------------------------------------------- 1. Contexte
+    titre1(document, "1. Contexte, justification et finalité de la plateforme")
+
+    titre2(document, "1.1 Le constat")
+    para(document,
+         "La conduite d'un projet ou d'un programme de développement mobilise un ensemble "
+         "d'instruments méthodologiques normalisés : cadre logique, cadre de rendement, cadre de "
+         "suivi des indicateurs, registre des risques, chronogramme, plan de travail et budget "
+         "annuel, manuel de suivi-évaluation, fiches de collecte, rapports périodiques et "
+         "tableaux de bord. Dans la pratique courante des unités de gestion de projet, ces "
+         "instruments sont produits et maintenus séparément, le plus souvent sous la forme de "
+         "classeurs Excel et de documents Word autonomes.")
+    para(document,
+         "Cette dispersion engendre quatre difficultés récurrentes. Premièrement, la "
+         "redondance de saisie : un même indicateur est ressaisi dans le cadre logique, dans le "
+         "cadre de rendement, dans le tableau de suivi et dans chaque rapport, avec un risque "
+         "élevé de divergence entre les versions. Deuxièmement, la lourdeur de la consolidation : "
+         "la production d'un rapport trimestriel mobilise plusieurs jours-hommes de mise en forme "
+         "avant même que ne commence le travail d'analyse. Troisièmement, la faiblesse de la "
+         "traçabilité : il devient difficile d'établir qui a modifié quelle valeur, quand et sur "
+         "la base de quelle source. Quatrièmement, le retard de l'information : lorsque le "
+         "tableau de bord parvient au comité de pilotage, les données qu'il présente sont déjà "
+         "anciennes de plusieurs semaines.")
+
+    titre2(document, "1.2 La réponse apportée")
+    para(document,
+         f"La plateforme {APP_NAME} traite ces difficultés en instaurant une source unique de "
+         "vérité. L'ensemble des données de planification et de suivi est saisi une seule fois, "
+         "dans une base structurée ; tous les instruments méthodologiques en sont ensuite dérivés "
+         "automatiquement. Modifier une cible dans la plateforme met simultanément à jour le "
+         "cadre logique, le cadre de rendement, le tableau de bord, le rapport de performance et "
+         "le flux Power BI.")
+    encadre(document, "Principe directeur",
+            "Un cadre logique et un budget suffisent à faire naître l'ensemble du dispositif de "
+            "suivi-évaluation. Tout le reste — indicateurs paramétrés, cadres de mesure, "
+            "questionnaires, chronogrammes, tableaux de bord, manuel de S&E — en est déduit et "
+            "reste synchronisé en permanence.")
+
+    titre2(document, "1.3 Finalités poursuivies")
+    for texte in [
+        "Réduire radicalement le temps consacré à la production documentaire, au profit du temps "
+        "d'analyse et de dialogue de gestion.",
+        "Garantir la cohérence méthodologique entre tous les instruments du dispositif, sur toute "
+        "la durée du projet.",
+        "Rendre l'information de performance disponible en continu, et non plus au rythme des "
+        "échéances de rapportage.",
+        "Sécuriser la mémoire institutionnelle du projet face à la rotation des équipes, en "
+        "documentant chaque indicateur, chaque méthode de collecte et chaque décision.",
+        "Faciliter la redevabilité envers les bénéficiaires, la tutelle et les partenaires "
+        "financiers, par des livrables normalisés et immédiatement exploitables.",
+    ]:
+        puce(document, texte)
+
+    titre2(document, "1.4 Utilisateurs visés")
+    tableau(document, ["Profil", "Usage principal de la plateforme"],
+            [["Responsable suivi-évaluation", "Paramétrage du cadre logique et des indicateurs, "
+                                              "conception des outils de collecte, analyse et "
+                                              "production des rapports"],
+             ["Coordonnateur de projet", "Pilotage, revue des alertes, arbitrages, validation "
+                                         "des rapports destinés au comité de pilotage"],
+             ["Chef de composante", "Mise à jour de l'avancement des activités et des produits "
+                                    "relevant de son périmètre"],
+             ["Agent de terrain", "Collecte numérique et saisie des données de réalisation"],
+             ["Responsable administratif et financier", "Suivi de l'exécution budgétaire, "
+                                                        "engagements et décaissements"],
+             ["Bailleur de fonds et tutelle", "Consultation des tableaux de bord et "
+                                              "téléchargement des livrables"],
+             ["Direction de programme", "Consolidation multi-projets au niveau du portefeuille"]],
+            largeurs=[5, 11.5])
+
+    document.add_page_break()
+
+    # ------------------------------------------------- 2. Périmètre
+    titre1(document, "2. Périmètre fonctionnel")
+    para(document,
+         "La plateforme couvre l'intégralité du cycle de gestion axée sur les résultats, depuis "
+         "la formulation du cadre logique jusqu'à la production des rapports d'évaluation. Le "
+         "tableau ci-après récapitule les quatorze modules fonctionnels.")
+    tableau(document, ["Domaine", "Module", "Objet"],
+            [["Pilotage", "Tableau de bord", "Indicateurs clés, indice de santé, graphiques, "
+                                             "alertes priorisées"],
+             ["Pilotage", "Portefeuille", "Vue consolidée multi-projets, comparaison, duplication"],
+             ["Pilotage", "Fiche du projet", "Identification, ancrage institutionnel, théorie du "
+                                             "changement, alignement stratégique"],
+             ["Planification", "Cadre logique", "Chaîne de résultats hiérarchisée, sources de "
+                                                "vérification, hypothèses"],
+             ["Planification", "Indicateurs", "Fiches métadonnées complètes, cibles, contrôle SMART"],
+             ["Planification", "Chronogramme", "Diagramme de Gantt, jalons, dépendances, retards"],
+             ["Planification", "PTBA et budget", "Lignes budgétaires, ventilation trimestrielle, "
+                                                 "engagements et décaissements"],
+             ["Suivi-évaluation", "Cadre de suivi (IPTT)", "Grille cibles/réalisations par "
+                                                           "période, saisie directe"],
+             ["Suivi-évaluation", "Risques et hypothèses", "Registre coté, matrice 5×5, "
+                                                           "atténuation, contingence"],
+             ["Suivi-évaluation", "Fiches et questionnaires", "Conception d'instruments, export "
+                                                              "Word et XLSForm"],
+             ["Données", "Importer", "Chargement depuis Excel, Word, XLSForm, exports Kobo"],
+             ["Données", "Livrables", "Génération des seize documents du dispositif"],
+             ["Données", "Power BI", "Flux temps réel et modèle en étoile"],
+             ["Système", "Administration", "Comptes, rôles, journal d'audit"]],
+            largeurs=[3.2, 4.3, 9])
+
+    titre2(document, "2.1 Ce que la plateforme ne fait pas")
+    para(document,
+         "La délimitation du périmètre est aussi importante que son contenu. La plateforme n'est "
+         "ni un logiciel de comptabilité, ni un outil de gestion des ressources humaines, ni un "
+         "système d'information géographique. Elle enregistre les montants engagés et décaissés "
+         "tels qu'ils lui sont communiqués par le service financier, mais ne tient pas la "
+         "comptabilité générale du projet et ne produit pas d'états financiers réglementaires. "
+         "Elle stocke des coordonnées GPS collectées sur le terrain, mais ne produit pas de "
+         "cartographie thématique. Ces fonctions relèvent d'outils spécialisés, avec lesquels la "
+         "plateforme s'articule par l'import et l'export de données.")
+
+    document.add_page_break()
+
+    # ------------------------------------------------- 3. Architecture
+    titre1(document, "3. Architecture générale de la solution")
+
+    titre2(document, "3.1 Vue d'ensemble")
+    para(document,
+         "La solution repose sur une architecture à trois couches, volontairement sobre afin de "
+         "garantir un déploiement simple et une maintenance durable dans des contextes où les "
+         "compétences informatiques disponibles sont limitées.")
+    tableau(document, ["Couche", "Composants", "Technologies"],
+            [["Présentation", "Interface web-mobile responsive : navigation, formulaires, "
+                              "tableaux, graphiques SVG", "HTML5, CSS3, JavaScript natif "
+                                                          "(aucune bibliothèque externe)"],
+             ["Application", "API REST : authentification, opérations métier, moteur "
+                             "analytique, générateurs de documents",
+              "Python 3.12, FastAPI, Uvicorn"],
+             ["Persistance", "Base de données relationnelle, quinze entités",
+              "SQLAlchemy 2 ; PostgreSQL en production, SQLite en développement"]],
+            largeurs=[3.2, 7.3, 6])
+
+    encadre(document, "Choix structurant",
+            "L'interface ne dépend d'aucune bibliothèque JavaScript externe et d'aucun CDN. Les "
+            "graphiques — anneaux, barres, courbes, jauges, diagramme de Gantt, matrice des "
+            "risques — sont produits en SVG par un module interne de 400 lignes. Il n'existe donc "
+            "aucune étape de compilation : le déploiement se réduit à l'installation des "
+            "dépendances Python. Ce choix supprime une classe entière de pannes (rupture de CDN, "
+            "incompatibilité de version, vulnérabilité d'une dépendance transitive) et garantit "
+            "le fonctionnement de l'application sur un réseau contraint.")
+
+    titre2(document, "3.2 Organisation du code applicatif")
+    tableau(document, ["Composant", "Responsabilité"],
+            [["app/main.py", "Assemblage de l'application, montage des routeurs, service de "
+                             "l'interface, sonde de disponibilité"],
+             ["app/config.py", "Configuration par variables d'environnement et référentiels métier"],
+             ["app/database.py", "Moteur et session SQLAlchemy, bascule SQLite / PostgreSQL"],
+             ["app/models.py", "Modèle de données : quinze entités et leurs relations"],
+             ["app/security.py", "Hachage PBKDF2-SHA256, jetons signés HMAC, contrôle d'accès "
+                                 "hiérarchique par rôle"],
+             ["app/crud.py", "Fabrique de routeurs CRUD génériques, sérialisation, coercition "
+                             "des types, journal d'audit"],
+             ["app/seed.py", "Compte administrateur initial et projet de démonstration"],
+             ["app/routers/", "Points d'entrée : authentification, projets, entités métier, "
+                              "imports, exports, Power BI"],
+             ["app/services/analytics.py", "Moteur de calcul de la performance, agrégations, "
+                                           "alertes, consolidation du portefeuille"],
+             ["app/services/excel_export.py", "Neuf générateurs de classeurs Excel mis en forme"],
+             ["app/services/word_export.py", "Sept générateurs de documents Word"],
+             ["app/services/xlsform.py", "Génération de formulaires XLSForm pour KoboToolbox et ODK"],
+             ["app/services/importer.py", "Analyseurs tolérants de classeurs Excel et de "
+                                          "documents Word"],
+             ["static/", "Interface : index.html, feuille de style, quatre modules JavaScript"]],
+            largeurs=[5.5, 11])
+
+    titre2(document, "3.3 Sécurité applicative")
+    para(document,
+         "L'authentification repose exclusivement sur la bibliothèque standard de Python. Les "
+         "mots de passe sont hachés en PBKDF2-SHA256 avec 180 000 itérations et un sel aléatoire "
+         "de 16 octets par compte. Les jetons de session sont des structures JSON signées en "
+         "HMAC-SHA256, comportant l'identité, le rôle et une date d'expiration ; leur durée de "
+         "validité est de douze heures par défaut. Ce choix évite les dépendances de "
+         "cryptographie compilées, dont l'installation échoue fréquemment sur les plateformes "
+         "d'hébergement à ressources restreintes.")
+
+    document.add_page_break()
+
+    # ------------------------------------------------- 4. Modèle de données
+    titre1(document, "4. Modèle de données")
+    para(document,
+         "Le modèle comprend quinze entités. Sa structure reflète directement la logique du "
+         "suivi-évaluation : un projet porte une chaîne de résultats, chaque résultat porte des "
+         "indicateurs, chaque indicateur porte des cibles périodiques et des réalisations "
+         "mesurées.")
+    tableau(document, ["Entité", "Rôle", "Principaux attributs"],
+            [["Project", "Projet ou programme",
+              "code, intitulé, secteur, bailleur, agence d'exécution, dates, budget, devise, "
+              "théorie du changement, alignement stratégique"],
+             ["LogframeElement", "Maillon de la chaîne de résultats",
+              "niveau (IMPACT / EFFET / PRODUIT / ACTIVITE), code, énoncé, parent, sources de "
+              "vérification, hypothèses, responsable"],
+             ["Indicator", "Fiche métadonnée d'indicateur",
+              "code, libellé, définition, unité, formule, numérateur, dénominateur, "
+              "désagrégations, référence, cible, sens, fréquence, source, méthode, responsable, "
+              "coût, test SMART"],
+             ["IndicatorTarget", "Cible périodique (jalon)",
+              "période, année, dates de début et de fin, valeur cible"],
+             ["IndicatorActual", "Réalisation mesurée",
+              "période, date de référence, valeur, valeurs désagrégées, source, agent "
+              "collecteur, statut de validation"],
+             ["Risk", "Risque du registre",
+              "code, catégorie, énoncé, cause, conséquence, probabilité, impact, atténuation, "
+              "contingence, risque résiduel, porteur, statut, date de revue"],
+             ["Assumption", "Hypothèse critique",
+              "code, niveau, énoncé, criticité, statut de validation, méthode de vérification, "
+              "responsable"],
+             ["Activity", "Activité du chronogramme",
+              "code, libellé, résultat rattaché, responsable, partenaires, lieu, dates, "
+              "avancement, statut, coûts, jalon, livrable"],
+             ["BudgetLine", "Ligne du PTBA",
+              "code, libellé, activité, catégorie, unité, quantité, coût unitaire, ventilation "
+              "trimestrielle, source de financement, engagé, décaissé"],
+             ["Form", "Instrument de collecte",
+              "code, intitulé, type, population cible, périodicité, indicateurs alimentés, "
+              "consignes, version, langue"],
+             ["FormQuestion", "Question d'un instrument",
+              "section, nom technique, libellé, type, modalités, obligation, contrainte, "
+              "logique de saut, calcul, indicateur relié"],
+             ["FormSubmission", "Réponse collectée", "date, agent, lieu, période, réponses"],
+             ["User", "Compte utilisateur",
+              "adresse électronique, nom, mot de passe haché, rôle, organisation, activité"],
+             ["ProjectMember", "Affectation d'un utilisateur à un projet", "projet, utilisateur, rôle"],
+             ["AuditLog", "Journal d'audit",
+              "horodatage, utilisateur, action, entité, référence, projet, détail"]],
+            largeurs=[3, 4, 9.5], taille=8.5)
+
+    titre2(document, "4.1 Règles d'intégrité")
+    for texte in [
+        "Un élément du cadre logique référence son parent, ce qui permet une profondeur "
+        "arbitraire et l'insertion de niveaux intermédiaires sans modification du modèle.",
+        "Un indicateur est rattaché à un élément de la chaîne de résultats ; la suppression de "
+        "cet élément conserve l'indicateur, qui devient orphelin et reste signalé comme tel.",
+        "La suppression d'un projet entraîne la suppression explicite et ordonnée de toutes ses "
+        "dépendances, y compris sous SQLite où les contraintes de cascade ne sont pas appliquées "
+        "par défaut.",
+        "Toute création, modification ou suppression est inscrite au journal d'audit avec "
+        "l'identité de son auteur.",
+    ]:
+        puce(document, texte)
+
+    document.add_page_break()
+
+    # ------------------------------------------------- 5. Modules
+    titre1(document, "5. Description détaillée des modules")
+
+    modules = [
+        ("5.1 Tableau de bord",
+         "Vue d'entrée du projet. Elle présente six indicateurs clés — indice de santé, nombre "
+         "d'indicateurs suivis, taux moyen de réalisation, avancement physique, exécution "
+         "budgétaire, nombre de risques critiques — puis une jauge de santé décomposée en ses "
+         "trois composantes pondérées, la répartition des indicateurs par statut de performance, "
+         "la performance moyenne par niveau de résultat, la programmation budgétaire "
+         "trimestrielle et l'exécution financière.",
+         ["La liste d'alertes priorisées signale, dans l'ordre de gravité : les indicateurs en "
+          "situation critique, les indicateurs clés non renseignés, les risques critiques ou "
+          "élevés encore ouverts, les activités dont l'échéance est dépassée et les hypothèses "
+          "invalidées.",
+          "L'écart entre la performance réalisée et le pourcentage de temps écoulé fournit une "
+          "lecture immédiate de l'avance ou du retard du projet.",
+          "Le tableau de bord est imprimable en l'état et exportable en classeur Excel "
+          "comportant graphiques et alertes."]),
+        ("5.2 Portefeuille",
+         "Consolidation de l'ensemble des projets. Chaque projet y est caractérisé par son "
+         "indice de santé, son budget, son taux moyen de réalisation, son avancement physique, "
+         "son taux d'exécution budgétaire et son nombre de risques critiques.",
+         ["La création d'un projet ouvre un formulaire structuré en quatre sections : "
+          "identification, ancrage institutionnel, cycle de vie et finances, cadrage stratégique.",
+          "La duplication reprend la structure complète d'un projet — cadre logique, indicateurs, "
+          "activités, budget, risques, hypothèses — sans les réalisations : elle sert à créer une "
+          "phase 2 ou à décliner un projet type sur une nouvelle zone."]),
+        ("5.3 Cadre logique",
+         "Édition arborescente de la chaîne de résultats. Chaque maillon affiche son niveau, son "
+         "code, son énoncé, ses sources de vérification, ses hypothèses et son responsable, ainsi "
+         "que les indicateurs qui lui sont rattachés avec leur référence, leur cible et leur "
+         "statut de performance.",
+         ["Un bouton par élément permet d'ajouter un résultat de niveau inférieur, ce qui rend la "
+          "construction de la chaîne à la fois guidée et rapide.",
+          "Un second bouton crée directement un indicateur rattaché au résultat, en préremplissant "
+          "son niveau.",
+          "L'export produit la matrice en Excel (format A3 paysage, prêt à imprimer) et en Word "
+          "(insérable dans un document de projet)."]),
+        ("5.4 Indicateurs",
+         "Gestion des fiches métadonnées. Le formulaire couvre vingt-quatre attributs répartis en "
+         "cinq sections : identification, mesure, référence et cible, collecte, qualité.",
+         ["La vue liste offre une recherche plein texte et un double filtre par niveau de "
+          "résultat et par statut de performance.",
+          "La fiche de suivi d'un indicateur présente la courbe des cibles et des réalisations, "
+          "l'historique des mesures et les cibles périodiques, avec saisie et suppression directes.",
+          "La génération automatique des cibles périodiques interpole linéairement entre la valeur "
+          "de référence et la cible finale, selon une granularité trimestrielle, semestrielle ou "
+          "annuelle."]),
+        ("5.5 Cadre de suivi des indicateurs (IPTT)",
+         "Grille de saisie croisant les indicateurs en lignes et les périodes en colonnes, chaque "
+         "période affichant sa cible et sa réalisation.",
+         ["Les cellules de réalisation sont directement modifiables ; toute cellule modifiée est "
+          "signalée visuellement et l'ensemble des saisies est enregistré en une seule action.",
+          "Ce mode de saisie reproduit l'ergonomie du tableur à laquelle les équipes de S&E sont "
+          "habituées, tout en garantissant l'intégrité de la base.",
+          "L'export Excel reprend la grille avec une mise en forme conditionnelle en trois "
+          "couleurs sur la colonne de progression."]),
+        ("5.6 Risques et hypothèses",
+         "Registre des risques coté sur une échelle de 1 à 5 en probabilité et en impact, assorti "
+         "d'une matrice de criticité 5×5 renseignée du nombre de risques par case, et suivi "
+         "distinct des hypothèses critiques du cadre logique.",
+         ["Chaque risque documente sa cause, sa conséquence sur les résultats, ses mesures "
+          "d'atténuation, son plan de contingence, son porteur, son statut et sa date de revue.",
+          "Le risque résiduel — probabilité et impact après application des mesures d'atténuation "
+          "— est saisi séparément, ce qui permet de mesurer l'efficacité du traitement.",
+          "Les hypothèses suivent un cycle de validation en quatre états : non vérifiée, "
+          "partiellement vérifiée, vérifiée, invalidée. Une hypothèse invalidée déclenche une "
+          "alerte, car elle remet en cause la logique d'intervention."]),
+        ("5.7 Chronogramme et activités",
+         "Diagramme de Gantt mensuel construit dynamiquement à partir des dates d'exécution. Les "
+         "barres sont colorées selon l'état : bleu pour les activités planifiées ou en cours, "
+         "vert pour les activités achevées, rouge pour celles dont l'échéance est dépassée ; les "
+         "jalons sont matérialisés par un losange et la date du jour par une ligne verticale.",
+         ["La part remplie de chaque barre représente le pourcentage d'avancement déclaré.",
+          "Une section dédiée récapitule les activités en retard, avec le nombre de jours de "
+          "dépassement et le responsable concerné.",
+          "L'export Excel produit un Gantt imprimable en A3 paysage, avec légende."]),
+        ("5.8 PTBA et budget",
+         "Saisie et suivi des lignes budgétaires. Chaque ligne combine une quantité, un coût "
+         "unitaire et un nombre de répétitions, dont le produit constitue le montant planifié ; "
+         "elle porte une ventilation sur les quatre trimestres, une source de financement, un "
+         "montant engagé et un montant décaissé.",
+         ["Les rattachements à une activité et, par elle, à un résultat du cadre logique "
+          "permettent d'analyser le budget par produit et par effet.",
+          "Les synthèses présentent la répartition par catégorie de dépense, la programmation "
+          "trimestrielle et, lorsque le projet est pluriannuel, l'exécution par exercice.",
+          "L'export produit un PTBA détaillé avec formules de totalisation actives et une feuille "
+          "de synthèse graphique."]),
+        ("5.9 Fiches et questionnaires",
+         "Concepteur d'instruments de collecte. Chaque question est décrite par sa section, son "
+         "nom technique, son libellé, son type parmi douze, ses modalités de réponse, son "
+         "caractère obligatoire, sa contrainte de saisie, sa condition d'affichage, sa formule de "
+         "calcul et l'indicateur qu'elle alimente.",
+         ["Les contraintes et les logiques de saut sont exprimées dans la syntaxe XLSForm, ce qui "
+          "garantit leur transposition fidèle dans KoboToolbox et ODK Collect.",
+          "Chaque instrument s'exporte simultanément en questionnaire Word — mis en page pour "
+          "l'administration papier, avec cases à cocher et zones de réponse — et en XLSForm "
+          "téléversable tel quel sur un serveur de collecte.",
+          "Le lien entre une question et un indicateur permet la réinjection automatique des "
+          "données collectées."]),
+        ("5.10 Administration",
+         "Gestion des comptes, des rôles et consultation du journal d'audit.",
+         ["Cinq rôles hiérarchisés déterminent les droits : lecteur, opérateur de saisie, "
+          "responsable de suivi-évaluation, coordonnateur, administrateur.",
+          "Le journal d'audit conserve l'horodatage, l'auteur, l'action, l'entité concernée et "
+          "le projet, pour toutes les opérations d'écriture."]),
+    ]
+    for titre_module, chapeau, points in modules:
+        titre2(document, titre_module)
+        para(document, chapeau)
+        for point in points:
+            puce(document, point)
+
+    document.add_page_break()
+
+    # ------------------------------------------------- 6. Méthodologie
+    titre1(document, "6. Méthodologie de suivi-évaluation intégrée")
+    para(document,
+         "Les règles de calcul appliquées par la plateforme ne sont pas des conventions "
+         "arbitraires : elles traduisent les pratiques établies de la gestion axée sur les "
+         "résultats. Leur explicitation est nécessaire à l'appropriation de l'outil et à la "
+         "défense des chiffres produits devant les instances de gouvernance.")
+
+    titre2(document, "6.1 Les deux taux de réalisation")
+    para(document,
+         "La plateforme calcule deux taux distincts pour chaque indicateur, car ils répondent à "
+         "deux questions différentes.")
+    tableau(document, ["Taux", "Formule", "Question à laquelle il répond"],
+            [["Taux de la période", "réalisé ÷ cible de la même période × 100",
+              "Le projet a-t-il tenu son engagement sur la période écoulée ?"],
+             ["Progression vers la cible finale",
+              "(réalisé − référence) ÷ (cible − référence) × 100",
+              "Quelle part du chemin vers la cible de fin de projet a été parcourue ?"]],
+            largeurs=[4, 6, 6.5], taille=9.5)
+    para(document,
+         "Le statut de performance est déterminé par le taux de la période lorsqu'une cible "
+         "périodique existe, et par la progression finale à défaut. Ce choix est essentiel : "
+         "comparer une réalisation de première année à une cible de fin de projet conduirait à "
+         "classer en situation critique un projet parfaitement conforme à sa programmation.")
+    encadre(document, "Illustration",
+            "Un projet vise 15 000 producteurs formés à l'horizon 2029, avec un jalon de 3 400 "
+            "au troisième trimestre 2025. La réalisation au troisième trimestre s'établit à "
+            "3 260. Le taux de la période est de 95,9 % — le projet est en bonne voie. La "
+            "progression vers la cible finale n'est que de 21,7 %, ce qui est normal en début "
+            "d'exécution. Juger l'indicateur sur ce second chiffre reviendrait à le déclarer "
+            "critique à tort.")
+
+    titre2(document, "6.2 Indicateurs à progression décroissante")
+    para(document,
+         "Certains indicateurs — incidence de la pauvreté, prévalence de l'insécurité "
+         "alimentaire, taux de pertes post-récolte — s'améliorent lorsqu'ils diminuent. La "
+         "plateforme inverse alors le rapport : le taux de la période devient cible ÷ réalisé, "
+         "de sorte qu'une valeur inférieure à la cible produit un taux supérieur à 100 %. La "
+         "progression vers la cible finale, fondée sur l'écart à la référence, reste valide sans "
+         "modification.")
+
+    titre2(document, "6.3 Statuts de performance")
+    tableau(document, ["Statut", "Seuil", "Interprétation opérationnelle"],
+            [["Atteint", "≥ 100 %", "L'engagement de la période est tenu ou dépassé"],
+             ["En bonne voie", "85 % à 99,9 %", "Écart mineur ne nécessitant pas de mesure "
+                                               "corrective immédiate"],
+             ["À surveiller", "60 % à 84,9 %", "Écart significatif appelant une analyse causale "
+                                               "à la prochaine revue"],
+             ["Critique", "< 60 %", "Écart majeur exigeant une mesure corrective documentée"],
+             ["Non renseigné", "—", "Absence de mesure : l'indicateur ne peut être apprécié"]],
+            largeurs=[3.5, 3, 10], taille=9.5)
+
+    titre2(document, "6.4 Indice de santé du projet")
+    para(document,
+         "L'indice de santé synthétise la situation du projet en une valeur unique, moyenne "
+         "pondérée de trois composantes.")
+    tableau(document, ["Composante", "Pondération", "Justification de la pondération"],
+            [["Résultats — taux moyen de réalisation des indicateurs", "45 %",
+              "La finalité d'un projet est l'atteinte de ses résultats, non la consommation de "
+              "ses moyens"],
+             ["Exécution physique — avancement moyen des activités", "30 %",
+              "Traduit la capacité opérationnelle effective de mise en œuvre"],
+             ["Exécution financière — taux de décaissement", "25 %",
+              "Contrainte de gestion réelle, mais qui ne préjuge pas de la qualité des résultats"]],
+            largeurs=[6.5, 2.5, 7.5], taille=9.5)
+    para(document,
+         "L'indice est systématiquement rapproché du pourcentage de temps écoulé. Un indice de "
+         "40 % à 32 % de la durée du projet traduit une avance ; le même indice à 70 % de la "
+         "durée traduit un retard sérieux. C'est cet écart, et non l'indice pris isolément, qui "
+         "constitue le signal de gestion.")
+
+    titre2(document, "6.5 Cotation des risques")
+    para(document,
+         "Chaque risque est coté de 1 à 5 en probabilité et de 1 à 5 en impact. Le produit des "
+         "deux notes donne un score de criticité compris entre 1 et 25, qui détermine le niveau "
+         "de priorité et la couleur affichée dans la matrice.")
+    tableau(document, ["Niveau", "Score", "Conduite à tenir"],
+            [["Critique", "15 à 25", "Traitement prioritaire, mesures d'atténuation immédiates, "
+                                     "revue mensuelle, information du comité de pilotage"],
+             ["Élevé", "10 à 14", "Mesures d'atténuation planifiées et budgétées, revue "
+                                  "trimestrielle"],
+             ["Modéré", "5 à 9", "Surveillance active, revue semestrielle"],
+             ["Faible", "1 à 4", "Acceptation, revue annuelle"]],
+            largeurs=[3, 2.5, 11], taille=9.5)
+    para(document,
+         "Le risque résiduel, coté après application des mesures d'atténuation, permet de vérifier "
+         "que le traitement produit l'effet attendu. Un risque dont le score résiduel demeure "
+         "critique appelle une réorientation stratégique, non une simple mesure opérationnelle.")
+
+    titre2(document, "6.6 Articulation entre risques et hypothèses")
+    para(document,
+         "Le cadre logique distingue les hypothèses — conditions externes nécessaires à la "
+         "réalisation de la chaîne de résultats — des risques, qui en sont la formulation "
+         "négative. La plateforme maintient les deux registres et les relie : une hypothèse dont "
+         "le statut passe à « invalidée » signale que la logique d'intervention repose désormais "
+         "sur une prémisse fausse, ce qui constitue l'alerte la plus grave que puisse produire un "
+         "dispositif de suivi.")
+
+    document.add_page_break()
+
+    # ------------------------------------------------- 7. Imports
+    titre1(document, "7. Import de données : Excel, Word, XLSForm, KoboToolbox")
+
+    titre2(document, "7.1 Import depuis Excel")
+    para(document,
+         "Le module d'import accepte un classeur comportant tout ou partie de huit onglets : "
+         "Cadre logique, Indicateurs, Cibles, Réalisations, Activités, Budget, Risques, "
+         "Hypothèses. L'appariement des onglets et des colonnes est volontairement tolérant : les "
+         "intitulés sont normalisés — passage en minuscules, suppression des accents et de la "
+         "ponctuation — puis rapprochés d'une table d'équivalences. Une colonne intitulée "
+         "« Situation de référence », « Valeur de référence » ou « Baseline » est reconnue dans "
+         "les trois cas.")
+    for texte in [
+        "Un modèle prérempli, commenté et assorti d'exemples est téléchargeable depuis "
+        "l'application. Il constitue le point de départ recommandé.",
+        "La hiérarchie du cadre logique est reconstituée à partir d'une colonne « Code parent » : "
+        "le produit P1.1 déclare l'effet OS1 comme parent, l'activité A1.1.1 déclare le produit "
+        "P1.1. Les rattachements introuvables sont signalés dans le rapport d'import.",
+        "Un enregistrement dont le code existe déjà est mis à jour ; les autres sont créés. "
+        "L'import est donc idempotent et peut être relancé après correction.",
+        "L'option « Remplacer les données existantes » vide préalablement le projet, pour un "
+        "rechargement complet.",
+        "Le rapport d'import détaille les onglets traités, le nombre d'enregistrements créés par "
+        "catégorie et la liste des avertissements.",
+    ]:
+        puce(document, texte)
+
+    titre2(document, "7.2 Import depuis Word")
+    para(document,
+         "De nombreux cadres logiques n'existent que sous la forme d'un tableau inséré dans le "
+         "document de projet. La plateforme analyse le document, inspecte chaque tableau, "
+         "détermine sa nature probable — cadre logique, registre des risques, liste "
+         "d'indicateurs, plan d'activités — et présente cet inventaire à l'utilisateur, qui "
+         "choisit le tableau à importer.")
+    for texte in [
+        "Deux structures sont reconnues : la matrice classique à quatre colonnes (logique "
+        "d'intervention, indicateurs objectivement vérifiables, sources de vérification, "
+        "hypothèses) et le tableau structuré comportant des colonnes explicites de niveau et de "
+        "code.",
+        "Les niveaux sont déduits des libellés au moyen d'un dictionnaire de correspondances : "
+        "« objectif global », « but » et « finalité » désignent l'impact ; « objectif "
+        "spécifique », « outcome » et « résultat » désignent l'effet ; « extrant » et « output » "
+        "désignent le produit.",
+        "Le rattachement hiérarchique est reconstitué par la position : chaque élément est "
+        "rattaché au dernier élément rencontré de niveau immédiatement supérieur.",
+        "Les indicateurs contenus dans la cellule des IOV sont extraits ligne à ligne, avec "
+        "détection du code lorsqu'il précède le libellé.",
+    ]:
+        puce(document, texte)
+    encadre(document, "Recommandation",
+            "L'import Word constitue un accélérateur de reprise, non un substitut à la relecture. "
+            "Après import, il convient de vérifier les rattachements hiérarchiques et de compléter "
+            "les métadonnées des indicateurs — unité, référence, cible, fréquence, source — que la "
+            "matrice d'origine ne contient généralement pas.")
+
+    titre2(document, "7.3 Import d'un XLSForm existant")
+    para(document,
+         "Un questionnaire déjà conçu pour KoboToolbox peut être importé : les feuilles "
+         "« survey » et « choices » sont lues, les groupes deviennent des sections, les "
+         "métadonnées techniques sont écartées et les contraintes conservées. Le questionnaire "
+         "devient alors modifiable dans la plateforme et exportable en Word.")
+
+    titre2(document, "7.4 Réinjection des données collectées")
+    para(document,
+         "L'export XLSX produit par KoboToolbox est réimportable. Les colonnes portant le nom "
+         "technique d'une question reliée à un indicateur alimentent automatiquement les "
+         "réalisations de cet indicateur. L'agrégation est choisie selon l'unité de mesure : "
+         "somme pour les effectifs et les volumes, moyenne pour les pourcentages, scores, ratios "
+         "et indices. Les valeurs produites sont enregistrées au statut « brouillon » et doivent "
+         "être validées par le responsable de suivi-évaluation avant d'être considérées comme "
+         "définitives.")
+
+    document.add_page_break()
+
+    # ------------------------------------------------- 8. Livrables
+    titre1(document, "8. Livrables générés automatiquement")
+    para(document,
+         "Seize livrables sont produits à la demande, à partir des données saisies. Tous sont "
+         "modifiables après téléchargement, ce qui préserve la liberté rédactionnelle des équipes "
+         "tout en supprimant le travail de mise en forme.")
+    tableau(document, ["Livrable", "Format", "Contenu et usage"],
+            [["Cadre logique", "Excel", "Matrice A3 paysage, indicateurs agrégés par résultat, "
+                                        "annexe des hypothèses critiques"],
+             ["Cadre logique", "Word", "Matrice à quatre colonnes avec bandeaux de niveau colorés, "
+                                       "insérable dans le document de projet"],
+             ["Cadre de rendement", "Excel", "Taux de période, progression finale, statuts "
+                                             "colorés, sources, méthodes, coûts, filtres actifs"],
+             ["Cadre de rendement", "Word", "Version rédactionnelle pour rapport officiel"],
+             ["Cadre de suivi des indicateurs (IPTT)", "Excel",
+              "Cibles et réalisations par période, taux par période, mise en forme conditionnelle"],
+             ["Chronogramme", "Excel", "Diagramme de Gantt mensuel coloré selon l'avancement, "
+                                       "avec légende"],
+             ["Plan de travail et budget annuel", "Excel",
+              "Budget détaillé, ventilation trimestrielle, formules de totalisation, synthèse "
+              "graphique par catégorie"],
+             ["Registre des risques", "Excel", "Registre coté trié par criticité et matrice 5×5 "
+                                               "renseignée"],
+             ["Plan de gestion des risques", "Word", "Registre, matrice et plans de contingence "
+                                                     "rédigés"],
+             ["Fiches métadonnées des indicateurs", "Word",
+              "Une fiche documentée par indicateur, avec série des cibles et réalisations"],
+             ["Plan et manuel de suivi-évaluation", "Word",
+              "Document maître en quinze chapitres, entièrement alimenté par les données du "
+              "projet"],
+             ["Rapport de performance", "Word", "Résumé exécutif, tableau des indicateurs, "
+                                                "exécution physique et financière, alertes, "
+                                                "canevas de mesures correctrices"],
+             ["Tableau de bord", "Excel", "Indicateurs clés, graphiques natifs Excel, feuille "
+                                          "d'alertes, détail des indicateurs"],
+             ["Jeu de données Power BI", "Excel", "Modèle en étoile, dimension calendrier, notice "
+                                                  "de branchement et mesures DAX"],
+             ["Questionnaires", "Word + XLSForm",
+              "Version papier mise en page et version numérique téléversable"],
+             ["Modèle d'import", "Excel", "Classeur type commenté, huit onglets avec exemples"],
+             ["Dossier complet", "ZIP", "Archive de l'ensemble des livrables, organisée par "
+                                        "format, avec notice d'utilisation"]],
+            largeurs=[5, 2.6, 8.9], taille=8.5)
+
+    titre2(document, "8.1 Le manuel de suivi-évaluation")
+    para(document,
+         "Ce livrable mérite une mention particulière : il constitue habituellement le document "
+         "le plus coûteux à produire d'un dispositif de S&E, et le premier à devenir obsolète. La "
+         "plateforme le génère en quinze chapitres — introduction, présentation du projet, cadre "
+         "conceptuel et définitions, chaîne de résultats, système d'indicateurs, cadre de mesure "
+         "du rendement, dispositif de collecte, gestion des risques et des hypothèses, "
+         "planification opérationnelle, rapportage et diffusion, évaluations et études, "
+         "dispositif organisationnel, assurance qualité des données, apprentissage et gestion des "
+         "connaissances, budget du dispositif — avec les données réelles du projet insérées dans "
+         "les tableaux. Il peut être régénéré à chaque revue annuelle, ce qui garantit qu'il "
+         "reflète en permanence le dispositif effectivement en vigueur.")
+
+    document.add_page_break()
+
+    # ------------------------------------------------- 9. Collecte
+    titre1(document, "9. Fiches de collecte et questionnaires numériques")
+
+    titre2(document, "9.1 Types de questions pris en charge")
+    tableau(document, ["Type", "Usage", "Rendu papier"],
+            [["text", "Réponse ouverte courte ou longue", "Lignes pointillées"],
+             ["integer", "Effectif, comptage", "Cases de saisie chiffre par chiffre"],
+             ["decimal", "Superficie, rendement, montant", "Cases de saisie"],
+             ["select_one", "Choix unique", "Cercles à cocher avec codes"],
+             ["select_multiple", "Choix multiples", "Carrés à cocher avec codes"],
+             ["date", "Date d'événement", "Gabarit JJ/MM/AAAA"],
+             ["time", "Heure", "Zone de saisie"],
+             ["geopoint", "Localisation GPS", "Champs latitude et longitude"],
+             ["calculate", "Valeur dérivée (ex. rendement)", "Non imprimé"],
+             ["note", "Consigne à l'enquêteur", "Texte en italique"],
+             ["image", "Photographie de preuve", "Mention de la pièce jointe"],
+             ["barcode", "Code-barres, identifiant", "Zone de saisie"]],
+            largeurs=[3.5, 7.5, 5.5], taille=9)
+
+    titre2(document, "9.2 Contrôles de qualité intégrés au formulaire")
+    para(document,
+         "La qualité d'une donnée se joue au moment de sa saisie. La plateforme permet de "
+         "définir, pour chaque question, une contrainte de validité et le message affiché "
+         "lorsqu'elle est violée. Ces contrôles sont transposés tels quels dans le XLSForm et "
+         "s'appliquent donc sur le terminal de l'enquêteur, y compris hors connexion.")
+    code(document, [
+        "Contrainte d'âge          . >= 15 and . <= 110",
+        "Contrainte de superficie  . >= 0 and . <= 50",
+        "Logique de saut           ${consentement} = '1'",
+        "Calcul de rendement       if(${superficie} > 0,",
+        "                             ${production} div (${superficie} * 1000), 0)",
+    ])
+
+    titre2(document, "9.3 Structure du XLSForm produit")
+    para(document,
+         "Le classeur généré comporte les trois feuilles attendues par la norme XLSForm — "
+         "survey, choices, settings — ainsi qu'une notice de déploiement. La plateforme ajoute "
+         "automatiquement les métadonnées de collecte (start, end, today, deviceid) et un groupe "
+         "d'identification comprenant la date, l'enquêteur, la localité et le point GPS. Les noms "
+         "de variables sont normalisés — minuscules, sans accent ni espace, unicité garantie — "
+         "afin de respecter les contraintes d'ODK.")
+    para(document,
+         "Le déploiement s'effectue en trois étapes : ouvrir KoboToolbox, créer un projet à "
+         "partir d'un fichier XLSForm téléversé, puis déployer. Les enquêteurs collectent ensuite "
+         "avec KoboCollect ou ODK Collect, en mode hors ligne, et synchronisent lorsqu'une "
+         "connexion est disponible.")
+
+    document.add_page_break()
+
+    # ------------------------------------------------- 10. BI
+    titre1(document, "10. Tableaux de bord et connexion Power BI")
+
+    titre2(document, "10.1 Tableaux de bord intégrés")
+    para(document,
+         "Les tableaux de bord de la plateforme sont conçus pour la lecture immédiate. Ils "
+         "reposent sur six graphiques produits en SVG : jauge de santé, anneau de répartition par "
+         "statut, barres de performance par niveau de résultat, colonnes de programmation "
+         "budgétaire, diagramme de Gantt et matrice des risques. Aucun de ces graphiques ne "
+         "dépend d'une bibliothèque externe, ce qui garantit leur affichage en toutes "
+         "circonstances, y compris sur un réseau filtrant les CDN.")
+
+    titre2(document, "10.2 Tableau de bord Excel automatisé")
+    para(document,
+         "Le classeur généré comporte une feuille de synthèse avec six indicateurs clés et trois "
+         "graphiques natifs Excel — camembert, barres, colonnes — alimentés par une feuille de "
+         "données, une feuille d'alertes et une feuille de détail des indicateurs avec filtres et "
+         "mise en forme conditionnelle. Étant construit sur des graphiques Excel natifs, il reste "
+         "modifiable et réutilisable par les équipes.")
+
+    titre2(document, "10.3 Connexion Power BI")
+    para(document, "Deux méthodes de branchement sont proposées.")
+    titre3(document, "Méthode 1 — Flux web à actualisation directe")
+    numero(document, "Ouvrir Power BI Desktop, puis Accueil > Obtenir des données > Web.")
+    numero(document, "Coller l'URL du jeu de données fournie par la vue « Power BI » de la "
+                     "plateforme, qui comprend le jeton d'accès de l'utilisateur.")
+    numero(document, "Dans l'éditeur Power Query, développer la colonne « tables », puis chaque "
+                     "table souhaitée.")
+    numero(document, "Créer les relations entre tables de dimensions et tables de faits dans la "
+                     "vue Modèle.")
+    para(document,
+         "Chaque table est également exposée individuellement, en JSON et en CSV, ce qui permet "
+         "de créer une requête distincte par table — approche généralement préférable pour la "
+         "maintenance du rapport.", taille=10)
+
+    titre3(document, "Méthode 2 — Classeur structuré")
+    para(document,
+         "Lorsque le poste d'analyse n'a pas accès à la plateforme, le classeur « Jeu de données "
+         "Power BI » fournit le même modèle sous forme de fichier, accompagné d'une notice "
+         "détaillant les relations à créer et les mesures DAX recommandées.")
+
+    titre2(document, "10.4 Modèle en étoile exposé")
+    tableau(document, ["Table", "Nature", "Contenu"],
+            [["Dim_Projet", "Dimension", "Identification et caractéristiques du projet"],
+             ["Dim_Resultat", "Dimension", "Chaîne de résultats hiérarchisée"],
+             ["Dim_Indicateur", "Dimension", "Métadonnées complètes des indicateurs"],
+             ["Dim_Calendrier", "Dimension", "Table de dates mensuelle et trimestrielle"],
+             ["Fait_Cible", "Fait", "Cibles périodiques"],
+             ["Fait_Realisation", "Fait", "Réalisations mesurées, taux et statut de performance"],
+             ["Fait_Activite", "Fait", "Activités, avancement et coûts"],
+             ["Fait_Budget", "Fait", "Lignes budgétaires, engagements et décaissements"],
+             ["Fait_Risque", "Fait", "Risques cotés et niveaux de criticité"]],
+            largeurs=[4, 3, 9.5], taille=9.5)
+
+    titre2(document, "10.5 Mesures DAX recommandées")
+    code(document, [
+        "Taux de réalisation =",
+        "    DIVIDE(SUM(Fait_Realisation[ValeurRealisee]), SUM(Fait_Cible[ValeurCible]))",
+        "",
+        "Taux d'exécution budgétaire =",
+        "    DIVIDE(SUM(Fait_Budget[Decaisse]), SUM(Fait_Budget[TotalPlanifie]))",
+        "",
+        "Avancement physique moyen = AVERAGE(Fait_Activite[Avancement])",
+        "",
+        "Risques critiques =",
+        "    CALCULATE(COUNTROWS(Fait_Risque), Fait_Risque[Niveau] = \"Critique\")",
+    ])
+
+    document.add_page_break()
+
+    # ------------------------------------------------- 11. Sécurité
+    titre1(document, "11. Utilisateurs, rôles et sécurité")
+
+    titre2(document, "11.1 Rôles et droits")
+    tableau(document, ["Rôle", "Droits accordés"],
+            [["Lecteur", "Consultation de toutes les vues et téléchargement des livrables"],
+             ["Opérateur de saisie", "Droits du lecteur, plus création et modification des "
+                                     "données : indicateurs, réalisations, activités, lignes "
+                                     "budgétaires, risques, questionnaires"],
+             ["Responsable suivi-évaluation", "Droits précédents, plus création et paramétrage "
+                                              "de projets et consultation du journal d'audit"],
+             ["Coordonnateur", "Droits précédents, dans une logique de pilotage et de validation"],
+             ["Administrateur", "Accès complet, gestion des comptes utilisateurs et des rôles"]],
+            largeurs=[4.5, 12])
+
+    titre2(document, "11.2 Traçabilité")
+    para(document,
+         "Toute opération d'écriture — création, modification, suppression, import — est inscrite "
+         "au journal d'audit avec son horodatage, l'adresse de son auteur, l'entité concernée et "
+         "le projet. Ce journal, consultable par les responsables de suivi-évaluation et les "
+         "administrateurs, constitue l'élément de preuve requis lors des audits de qualité des "
+         "données et des missions de supervision.")
+
+    titre2(document, "11.3 Recommandations de mise en production")
+    for texte in [
+        "Modifier impérativement le mot de passe administrateur et la clé de signature des jetons "
+        "avant toute mise en service.",
+        "Restreindre les origines autorisées au seul domaine de l'application, plutôt que de "
+        "conserver la valeur permissive par défaut.",
+        "Ne pas diffuser les liens Power BI : ils incorporent un jeton portant les droits de "
+        "l'utilisateur qui les a générés.",
+        "Créer un compte nominatif par utilisateur, plutôt qu'un compte partagé, afin que le "
+        "journal d'audit conserve sa valeur probante.",
+        "Attribuer le rôle strictement nécessaire à chaque utilisateur, et réserver le rôle "
+        "d'administrateur à deux personnes au plus.",
+        "Vérifier que les sauvegardes automatiques de la base de données sont actives et tester "
+        "périodiquement la procédure de restauration.",
+    ]:
+        puce(document, texte)
+
+    document.add_page_break()
+
+    # ------------------------------------------------- 12. Prise en main
+    titre1(document, "12. Guide de prise en main")
+    para(document,
+         "La séquence ci-après permet de rendre un projet pleinement opérationnel dans la "
+         "plateforme. Elle suppose que le cadre logique et le budget du projet ont été validés.")
+
+    etapes = [
+        ("Créer le projet",
+         "Vue Portefeuille, bouton « Nouveau projet ». Renseigner le code, l'intitulé, le "
+         "bailleur, l'agence d'exécution, les dates et le budget. La théorie du changement et "
+         "l'approche de suivi-évaluation peuvent être complétées ultérieurement : elles "
+         "alimenteront le manuel de S&E."),
+        ("Charger le cadre logique",
+         "Deux voies. Si le cadre logique existe sous forme de tableau, télécharger le modèle "
+         "d'import depuis la vue Importer, y transposer les données, puis charger le classeur. "
+         "Sinon, construire l'arborescence directement dans la vue Cadre logique, du niveau "
+         "impact vers les activités."),
+        ("Paramétrer les indicateurs",
+         "Pour chaque indicateur, compléter la fiche métadonnée : définition opérationnelle, "
+         "unité, mode de calcul, désagrégations exigées, valeur de référence et sa date, cible "
+         "finale et son échéance, sens de progression, fréquence, source, méthode de collecte, "
+         "responsable. Marquer comme « indicateur clé » ceux qui seront présentés au comité de "
+         "pilotage."),
+        ("Générer les cibles périodiques",
+         "Depuis la fiche de suivi de chaque indicateur, utiliser « Générer les cibles "
+         "périodiques » en choisissant la granularité. La plateforme interpole linéairement entre "
+         "la référence et la cible finale ; les valeurs obtenues doivent ensuite être ajustées "
+         "pour tenir compte du rythme réel de montée en charge du projet."),
+        ("Saisir le chronogramme",
+         "Créer les activités, en les rattachant aux produits du cadre logique, avec dates, "
+         "responsables et coûts prévus. Marquer les jalons, qui structureront la lecture du "
+         "diagramme de Gantt."),
+        ("Saisir le PTBA",
+         "Créer les lignes budgétaires, rattachées aux activités, avec quantité, coût unitaire et "
+         "ventilation trimestrielle. Cette ventilation alimente la programmation présentée au "
+         "tableau de bord."),
+        ("Constituer le registre des risques",
+         "Identifier les risques par catégorie, les coter en probabilité et en impact, documenter "
+         "les mesures d'atténuation et les plans de contingence, désigner un porteur et fixer une "
+         "date de revue. Renseigner en parallèle les hypothèses critiques du cadre logique."),
+        ("Concevoir les instruments de collecte",
+         "Créer les fiches et questionnaires, structurer les questions par section, définir les "
+         "modalités, les contraintes de saisie et les logiques de saut, puis relier les questions "
+         "aux indicateurs qu'elles alimentent."),
+        ("Déployer la collecte",
+         "Exporter chaque instrument en XLSForm, le téléverser dans KoboToolbox, le déployer, "
+         "puis former les enquêteurs. Exporter également la version Word pour les contextes où "
+         "l'administration papier reste nécessaire."),
+        ("Alimenter le suivi",
+         "À chaque échéance de collecte, saisir les réalisations dans la vue Cadre de suivi, ou "
+         "réimporter l'export KoboToolbox. Mettre à jour l'avancement des activités et les "
+         "montants engagés et décaissés."),
+        ("Analyser et décider",
+         "Consulter le tableau de bord, traiter les alertes par ordre de gravité, documenter les "
+         "causes des écarts et arrêter les mesures correctrices lors de la revue périodique."),
+        ("Produire les livrables",
+         "Depuis la vue Livrables, générer les documents attendus, ou télécharger le dossier "
+         "complet au format ZIP avant chaque comité de pilotage."),
+    ]
+    for index, (titre_etape, description) in enumerate(etapes, start=1):
+        titre3(document, f"Étape {index} — {titre_etape}")
+        para(document, description, taille=10)
+
+    encadre(document, "Ordre recommandé",
+            "Le cadre logique doit précéder les indicateurs, qui doivent précéder les cibles "
+            "périodiques ; les activités doivent précéder les lignes budgétaires. Cet ordre "
+            "garantit que chaque élément trouve son rattachement au moment de sa création et "
+            "évite les reprises ultérieures.")
+
+    document.add_page_break()
+
+    # ------------------------------------------------- 13. Déploiement
+    titre1(document, "13. Déploiement sur GitHub et Render")
+
+    titre2(document, "13.1 Dépôt de code")
+    para(document,
+         "Le code source est hébergé sur GitHub. Le dépôt contient l'application, l'interface, "
+         "la documentation et le fichier de description d'infrastructure destiné à Render.")
+    code(document, [
+        "git clone https://github.com/Ricard228/sepia-erp.git",
+        "cd sepia-erp",
+        "python -m venv .venv && .venv\\Scripts\\activate",
+        "pip install -r requirements.txt",
+        "uvicorn app.main:app --reload --port 8000",
+    ])
+
+    titre2(document, "13.2 Déploiement par blueprint")
+    numero(document, "Se connecter à Render, choisir New puis Blueprint.")
+    numero(document, "Sélectionner le dépôt sepia-erp. Render lit le fichier render.yaml et "
+                     "provisionne simultanément le service web et la base PostgreSQL.")
+    numero(document, "Renseigner la variable SEPIA_ADMIN_PASSWORD dans le tableau de bord Render.")
+    numero(document, "Lancer le déploiement. La sonde /api/sante confirme la disponibilité du "
+                     "service.")
+
+    titre2(document, "13.3 Déploiement manuel")
+    tableau(document, ["Paramètre", "Valeur"],
+            [["Environnement", "Python 3"],
+             ["Commande de construction", "pip install -r requirements.txt"],
+             ["Commande de démarrage", "uvicorn app.main:app --host 0.0.0.0 --port $PORT"],
+             ["Chemin de la sonde de santé", "/api/sante"]],
+            largeurs=[5.5, 11])
+    para(document,
+         "Créer ensuite une base PostgreSQL sur Render et lier sa chaîne de connexion à la "
+         "variable DATABASE_URL du service web.")
+
+    titre2(document, "13.4 Variables d'environnement")
+    tableau(document, ["Variable", "Rôle", "Valeur par défaut"],
+            [["DATABASE_URL", "Chaîne de connexion PostgreSQL", "SQLite local"],
+             ["SEPIA_SECRET_KEY", "Clé de signature des jetons", "valeur de développement"],
+             ["SEPIA_ADMIN_EMAIL", "Compte administrateur initial", "admin@sepia.org"],
+             ["SEPIA_ADMIN_PASSWORD", "Mot de passe initial", "sepia2024"],
+             ["SEPIA_TOKEN_TTL", "Durée de validité des jetons, en secondes", "43200"],
+             ["SEPIA_SEED_DEMO", "Chargement du projet de démonstration", "1"],
+             ["SEPIA_CORS_ORIGINS", "Origines autorisées", "*"]],
+            largeurs=[5, 7.5, 4], taille=9.5)
+
+    encadre(document, "Point de vigilance",
+            "Sur le plan gratuit de Render, le disque du service web n'est pas persistant : les "
+            "fichiers écrits sont perdus à chaque redéploiement et à chaque mise en veille. Le "
+            "recours à la base PostgreSQL est donc indispensable en production. En développement "
+            "local, la base SQLite convient parfaitement.")
+
+    document.add_page_break()
+
+    # ------------------------------------------------- 14. API
+    titre1(document, "14. Interface de programmation (API)")
+    para(document,
+         "L'ensemble des fonctions de la plateforme est accessible par une API REST documentée "
+         "automatiquement. La documentation interactive est disponible à l'adresse /api/docs et "
+         "permet d'exécuter les appels depuis le navigateur.")
+    tableau(document, ["Méthode et chemin", "Fonction"],
+            [["POST /api/auth/login", "Authentification, renvoie un jeton de session"],
+             ["GET /api/projects", "Liste des projets"],
+             ["GET /api/dashboard/{id}", "Tableau de bord complet d'un projet"],
+             ["GET /api/portefeuille", "Consolidation multi-projets"],
+             ["GET /api/logframe/tree/{id}", "Arborescence du cadre logique avec indicateurs"],
+             ["GET /api/indicateurs/suivi/{id}", "Grille IPTT cibles/réalisations"],
+             ["POST /api/indicators/{id}/saisie", "Saisie ou mise à jour d'une réalisation"],
+             ["POST /api/projects/{id}/periodes", "Génération automatique des cibles périodiques"],
+             ["POST /api/imports/excel/{id}", "Import d'un classeur de projet"],
+             ["POST /api/imports/word/analyser", "Analyse des tableaux d'un document Word"],
+             ["POST /api/imports/kobo/{form_id}", "Réinjection de données collectées"],
+             ["GET /api/exports/{id}/{livrable}", "Téléchargement d'un livrable"],
+             ["GET /api/exports/{id}/dossier-complet", "Archive ZIP de tous les livrables"],
+             ["GET /api/powerbi/{id}/dataset", "Flux de données pour Power BI"],
+             ["GET /api/sante", "Sonde de disponibilité"]],
+            largeurs=[7, 9.5], taille=9)
+    para(document,
+         "Les entités métier — cadre logique, indicateurs, cibles, réalisations, risques, "
+         "hypothèses, activités, lignes budgétaires, formulaires, questions — disposent chacune "
+         "d'un jeu complet d'opérations de création, lecture, mise à jour, suppression et "
+         "création en lot, engendrées par une fabrique commune. Cette approche garantit "
+         "l'homogénéité du comportement de l'API et réduit la surface de défaut.")
+
+    document.add_page_break()
+
+    # ------------------------------------------------- 15. Exploitation
+    titre1(document, "15. Exploitation, maintenance et évolutions")
+
+    titre2(document, "15.1 Exploitation courante")
+    tableau(document, ["Périodicité", "Opération"],
+            [["Continue", "Saisie des réalisations et mise à jour de l'avancement des activités"],
+             ["Mensuelle", "Mise à jour des engagements et décaissements ; revue des activités "
+                           "en retard"],
+             ["Trimestrielle", "Génération du rapport de performance ; revue du registre des "
+                               "risques ; validation des données collectées"],
+             ["Semestrielle", "Atelier de revue de performance ; actualisation des hypothèses ; "
+                              "dossier complet pour le comité de pilotage"],
+             ["Annuelle", "Enquête de suivi des effets ; élaboration du PTBA de l'exercice "
+                          "suivant ; régénération du manuel de suivi-évaluation ; audit de la "
+                          "qualité des données"]],
+            largeurs=[3.5, 13])
+
+    titre2(document, "15.2 Maintenance technique")
+    for texte in [
+        "Mettre à jour périodiquement les dépendances Python, en vérifiant au préalable la "
+        "compatibilité par un déploiement de test.",
+        "Surveiller la sonde de santé et les journaux applicatifs fournis par Render.",
+        "Vérifier la présence et l'intégrité des sauvegardes de la base de données.",
+        "Renouveler la clé de signature des jetons en cas de suspicion de compromission ; cette "
+        "opération invalide toutes les sessions en cours.",
+    ]:
+        puce(document, texte)
+
+    titre2(document, "15.3 Évolutions envisageables")
+    para(document,
+         "L'architecture retenue autorise plusieurs extensions sans refonte, par ordre croissant "
+         "d'effort de mise en œuvre.")
+    tableau(document, ["Évolution", "Apport attendu", "Effort"],
+            [["Connexion directe à l'API KoboToolbox", "Suppression de l'étape manuelle "
+                                                       "d'export-import des données collectées",
+              "Modéré"],
+             ["Module de cartographie des interventions", "Visualisation géographique des "
+                                                          "réalisations à partir des points GPS "
+                                                          "déjà collectés", "Modéré"],
+             ["Notifications par courriel et messagerie", "Alerte automatique des responsables en "
+                                                          "cas d'échéance ou de dérive", "Modéré"],
+             ["Gestion documentaire", "Rattachement des pièces justificatives aux activités et "
+                                      "aux réalisations", "Modéré"],
+             ["Application mobile hors ligne native", "Collecte autonome sans dépendance à un "
+                                                      "outil tiers", "Important"],
+             ["Module d'évaluation d'impact", "Analyse contrefactuelle intégrée (groupes de "
+                                              "comparaison, appariement)", "Important"]],
+            largeurs=[5.5, 8, 3], taille=9.5)
+
+    document.add_page_break()
+
+    # ------------------------------------------------- Annexes
+    titre1(document, "Annexe 1 — Glossaire du suivi-évaluation")
+    tableau(document, ["Terme", "Définition"],
+            [["Cadre logique", "Matrice de planification reliant la logique d'intervention, les "
+                               "indicateurs objectivement vérifiables, les sources de "
+                               "vérification et les hypothèses"],
+             ["Cadre de rendement", "Instrument précisant, pour chaque indicateur, la source, la "
+                                    "méthode, la fréquence, le responsable et le coût de la mesure"],
+             ["IPTT", "Indicator Performance Tracking Table : tableau de suivi croisant "
+                      "indicateurs et périodes, en cibles et en réalisations"],
+             ["Chaîne de résultats", "Enchaînement intrants, activités, produits, effets, impact"],
+             ["Impact", "Changement de long terme auquel le projet contribue sans en être seul "
+                        "responsable"],
+             ["Effet", "Changement de comportement, de capacité ou de performance directement "
+                       "attribuable au projet"],
+             ["Produit", "Bien ou service livré par le projet, sous son contrôle direct"],
+             ["Référence (baseline)", "Valeur de l'indicateur avant le démarrage des activités"],
+             ["Cible", "Valeur attendue de l'indicateur à une échéance déterminée"],
+             ["Jalon", "Cible intermédiaire fixée pour une période donnée"],
+             ["Hypothèse", "Condition externe nécessaire à la chaîne de résultats, hors du "
+                           "contrôle du projet"],
+             ["Risque", "Événement incertain dont la survenue affecterait l'atteinte des "
+                        "résultats"],
+             ["Désagrégation", "Ventilation d'un indicateur par catégorie : sexe, âge, région, "
+                               "milieu, statut"],
+             ["GAR", "Gestion axée sur les résultats : approche centrée sur l'atteinte de "
+                     "résultats mesurables"],
+             ["SMART", "Critères de qualité d'un indicateur : spécifique, mesurable, atteignable, "
+                       "pertinent, temporellement défini"],
+             ["PTBA", "Plan de travail et budget annuel"],
+             ["XLSForm", "Norme de description de questionnaires numériques sous forme de "
+                         "classeur, utilisée par ODK et KoboToolbox"],
+             ["Critères du CAD", "Pertinence, cohérence, efficacité, efficience, impact, "
+                                 "durabilité"]],
+            largeurs=[4, 12.5], taille=9)
+
+    document.add_page_break()
+    titre1(document, "Annexe 2 — Arborescence du code source")
+    code(document, [
+        "sepia-erp/",
+        "├── app/",
+        "│   ├── main.py                  Application FastAPI",
+        "│   ├── config.py                Configuration et référentiels",
+        "│   ├── database.py              Moteur SQLAlchemy",
+        "│   ├── models.py                Quinze entités du modèle de données",
+        "│   ├── security.py              Authentification et contrôle d'accès",
+        "│   ├── crud.py                  Fabrique de routeurs CRUD",
+        "│   ├── seed.py                  Projet de démonstration",
+        "│   ├── routers/",
+        "│   │   ├── auth.py              Authentification et comptes",
+        "│   │   ├── projects.py          Projets, tableaux de bord, référentiels",
+        "│   │   ├── entities.py          Entités métier",
+        "│   │   ├── imports.py           Imports Excel, Word, XLSForm, Kobo",
+        "│   │   ├── exports.py           Génération des livrables",
+        "│   │   └── powerbi.py           Flux de business intelligence",
+        "│   └── services/",
+        "│       ├── analytics.py         Moteur de performance",
+        "│       ├── excel_export.py      Générateurs Excel",
+        "│       ├── word_export.py       Générateurs Word",
+        "│       ├── xlsform.py           Générateur XLSForm",
+        "│       └── importer.py          Analyseurs Excel et Word",
+        "├── static/",
+        "│   ├── index.html               Structure de l'interface",
+        "│   ├── css/app.css              Feuille de style responsive",
+        "│   └── js/",
+        "│       ├── core.js              État, API, composants d'interface",
+        "│       ├── charts.js            Graphiques SVG",
+        "│       ├── views.js             Quatorze vues fonctionnelles",
+        "│       └── app.js               Navigation et cycle de vie",
+        "├── scripts/generer_documentation.py",
+        "├── docs/                        Documentation Word",
+        "├── requirements.txt             Dépendances Python",
+        "├── render.yaml                  Description d'infrastructure Render",
+        "└── README.md                    Notice technique",
+    ])
+
+    document.add_page_break()
+    titre1(document, "Annexe 3 — Référentiels paramétrables")
+    para(document,
+         "Les listes de valeurs proposées dans les formulaires sont centralisées et modifiables "
+         "dans le fichier de configuration de l'application.")
+    tableau(document, ["Référentiel", "Valeurs proposées"],
+            [["Niveaux du cadre logique", "Impact, Effet, Produit, Activité"],
+             ["Fréquences de collecte", "Mensuelle, trimestrielle, semestrielle, annuelle, "
+                                        "ponctuelle, mi-parcours, finale"],
+             ["Types d'indicateur", "Quantitatif, qualitatif, composite, proxy"],
+             ["Statuts de projet", "Identification, formulation, en cours, suspendu, clôturé"],
+             ["Catégories de risque", "Politique et gouvernance, sécuritaire, financier et "
+                                      "budgétaire, opérationnel, technique, environnemental et "
+                                      "climatique, social et genre, sanitaire, institutionnel et "
+                                      "capacités, réputationnel"],
+             ["Statuts d'activité", "Planifiée, en cours, achevée, retardée, annulée"],
+             ["Statuts de risque", "Ouvert, maîtrisé, clos, survenu"],
+             ["Catégories budgétaires", "Personnel, équipements, formations, prestations, missions "
+                                        "et déplacements, fonctionnement, investissements, "
+                                        "communication, suivi-évaluation, imprévus"],
+             ["Désagrégations", "Sexe, âge, région, milieu, handicap, statut socio-économique, "
+                                "type de bénéficiaire, commune"],
+             ["Unités de mesure", "Nombre, pourcentage, ratio, score, indice, tonne, hectare, "
+                                  "kilomètre, FCFA, USD, EUR, jour, mois, t/ha, kg, litre"],
+             ["Types de formulaire", "Questionnaire, fiche de suivi, grille d'entretien, grille "
+                                     "de focus group, fiche de présence, fiche d'observation"],
+             ["Statuts d'hypothèse", "Non vérifiée, partiellement vérifiée, vérifiée, invalidée"]],
+            largeurs=[4.5, 12], taille=9)
+
+    document.add_paragraph()
+    p = document.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run = p.add_run(f"— Fin du document —\n{APP_NAME} version {APP_VERSION} · édité le {date_fr}")
+    run.italic = True
+    run.font.size = Pt(9)
+    run.font.color.rgb = GRIS
+
+    pied_de_page(document, f"{APP_NAME} — Documentation fonctionnelle et technique — version "
+                           f"{APP_VERSION}")
+
+    os.makedirs(os.path.dirname(chemin_sortie), exist_ok=True)
+    document.save(chemin_sortie)
+    return chemin_sortie
+
+
+if __name__ == "__main__":
+    sortie = sys.argv[1] if len(sys.argv) > 1 else os.path.join(
+        RACINE, "docs", "SEPIA_Documentation_plateforme.docx")
+    chemin = construire(sortie)
+    taille = os.path.getsize(chemin)
+    print(f"Document généré : {chemin} ({taille // 1024} Ko)")

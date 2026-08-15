@@ -1,0 +1,35 @@
+# Infrastructure Render — plateforme SEPIA
+# Déploiement : Render > New > Blueprint > sélectionner ce dépôt.
+services:
+  - type: web
+    name: sepia-erp
+    runtime: python
+    plan: free
+    region: frankfurt
+    branch: main
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/sante
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.7"
+      - key: SEPIA_SECRET_KEY
+        generateValue: true
+      - key: SEPIA_ADMIN_EMAIL
+        value: admin@sepia.org
+      - key: SEPIA_ADMIN_PASSWORD
+        sync: false          # à renseigner dans le tableau de bord Render
+      - key: SEPIA_SEED_DEMO
+        value: "1"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: sepia-db
+          property: connectionString
+
+databases:
+  - name: sepia-db
+    plan: free
+    region: frankfurt
+    databaseName: sepia
+    user: sepia

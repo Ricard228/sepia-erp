@@ -1,0 +1,19 @@
+{
+  "name": "SEPIA — Planification et suivi-évaluation",
+  "short_name": "SEPIA",
+  "description": "Plateforme ERP de planification et de suivi-évaluation des projets et programmes de développement.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#1F4E79",
+  "theme_color": "#1F4E79",
+  "lang": "fr",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Crect width='512' height='512' rx='112' fill='%231F4E79'/%3E%3Cpath d='M112 336h64V208h-64zm104 0h64V128h-64zm104 0h64v-80h-64z' fill='%23fff'/%3E%3C/svg%3E",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
