@@ -226,7 +226,7 @@ def construire(chemin_sortie: str) -> str:
         ("2.", "Périmètre fonctionnel"),
         ("3.", "Architecture générale de la solution"),
         ("4.", "Modèle de données"),
-        ("5.", "Description détaillée des quinze modules"),
+        ("5.", "Description détaillée des dix-neuf modules"),
         ("6.", "Méthodologie de suivi-évaluation intégrée"),
         ("7.", "Import de données : Excel, Word, XLSForm, KoboToolbox"),
         ("8.", "Livrables générés automatiquement"),
@@ -395,7 +395,7 @@ def construire(chemin_sortie: str) -> str:
              ["Application", "API REST : authentification, opérations métier, moteur "
                              "analytique, générateurs de documents",
               "Python 3.12, FastAPI, Uvicorn"],
-             ["Persistance", "Base de données relationnelle, quinze entités",
+             ["Persistance", "Base de données relationnelle, vingt-quatre entités",
               "SQLAlchemy 2 ; PostgreSQL en production, SQLite en développement"]],
             largeurs=[3.2, 7.3, 6])
 
@@ -416,7 +416,7 @@ def construire(chemin_sortie: str) -> str:
                              "l'interface, sonde de disponibilité"],
              ["app/config.py", "Configuration par variables d'environnement et référentiels métier"],
              ["app/database.py", "Moteur et session SQLAlchemy, bascule SQLite / PostgreSQL"],
-             ["app/models.py", "Modèle de données : quinze entités et leurs relations"],
+             ["app/models.py", "Modèle de données : vingt-quatre entités et leurs relations"],
              ["app/security.py", "Hachage PBKDF2-SHA256, jetons signés HMAC, contrôle d'accès "
                                  "hiérarchique par rôle"],
              ["app/crud.py", "Fabrique de routeurs CRUD génériques, sérialisation, coercition "
@@ -449,7 +449,7 @@ def construire(chemin_sortie: str) -> str:
     # ------------------------------------------------- 4. Modèle de données
     titre1(document, "4. Modèle de données")
     para(document,
-         "Le modèle comprend dix-huit entités. Sa structure reflète directement la logique du "
+         "Le modèle comprend vingt-quatre entités. Sa structure reflète directement la logique du "
          "suivi-évaluation : un projet porte une chaîne de résultats et un découpage territorial ; "
          "chaque résultat porte des indicateurs ; chaque indicateur porte des cibles périodiques et "
          "des réalisations mesurées, elles-mêmes localisées dans une zone, rattachées à l'activité "
@@ -491,6 +491,26 @@ def construire(chemin_sortie: str) -> str:
              ["BudgetLine", "Ligne du PTBA",
               "code, libellé, activité, catégorie, unité, quantité, coût unitaire, ventilation "
               "trimestrielle, source de financement, engagé, décaissé"],
+             ["Beneficiary", "Groupe de bénéficiaires",
+              "intitulé, typologie, zone, critères et méthode de sélection, cible et effectifs "
+              "atteints ventilés, ménages, revenu et pauvreté de référence, besoins, contraintes, "
+              "bénéfices attendus, mode de participation, vulnérabilité, mécanisme de plainte"],
+             ["Partner", "Organisation partenaire",
+              "intitulé, type, rôle, contribution financière conventionnée et décaissée, "
+              "contribution technique, dates de convention, appréciation de la performance"],
+             ["Evaluation", "Exercice évaluatif",
+              "intitulé, type, période, équipe, statut, notes et justifications par critère du "
+              "CAD, note globale calculée"],
+             ["EvaluationRecommendation", "Recommandation d'évaluation",
+              "énoncé, criticité, réponse du management, responsable, échéance, taux de mise en "
+              "œuvre"],
+             ["ImpactStudy", "Étude d'évaluation d'impact",
+              "approche, méthode, hypothèse d'identification, règle d'affectation, indicateurs "
+              "de résultat, tailles des groupes, grappes, corrélation intra-grappe, effet minimal "
+              "détectable, écart-type, puissance, seuil, effet estimé, p-value"],
+             ["ApiKey", "Clé d'accès en lecture seule",
+              "intitulé, empreinte de la clé, projet, propriétaire, date d'expiration, dernière "
+              "utilisation, révocation"],
              ["Form", "Instrument de collecte",
               "code, intitulé, type, population cible, périodicité, indicateurs alimentés, "
               "consignes, version, langue"],
@@ -499,7 +519,9 @@ def construire(chemin_sortie: str) -> str:
               "logique de saut, calcul, indicateur relié"],
              ["FormSubmission", "Réponse collectée", "date, agent, lieu, période, réponses"],
              ["User", "Compte utilisateur",
-              "adresse électronique, nom, mot de passe haché, rôle, organisation, activité"],
+              "adresse électronique, nom, empreinte du mot de passe, rôle, organisation, état, "
+              "confirmation d'adresse, tentatives infructueuses, verrouillage, date de "
+              "changement du mot de passe, seuil de validité des jetons"],
              ["ProjectMember", "Affectation d'un utilisateur à un projet", "projet, utilisateur, rôle"],
              ["AuditLog", "Journal d'audit",
               "horodatage, utilisateur, action, entité, référence, projet, détail"]],
@@ -527,7 +549,7 @@ def construire(chemin_sortie: str) -> str:
     document.add_page_break()
 
     # ------------------------------------------------- 5. Modules
-    titre1(document, "5. Description détaillée des quinze modules")
+    titre1(document, "5. Description détaillée des dix-neuf modules")
 
     modules = [
         ("5.1 Tableau de bord",
@@ -718,10 +740,82 @@ def construire(chemin_sortie: str) -> str:
           "période semestrielle englobe ses deux trimestres.",
           "Le rapport produit comporte huit parties, dont un bloc de validation à signer par le "
           "responsable de suivi-évaluation, le coordonnateur et le comité de pilotage."]),
-        ("5.15 Administration",
-         "Gestion des comptes, des rôles et consultation du journal d'audit.",
+        ("5.15 Bénéficiaires",
+         "Caractérisation des groupes visés par l'intervention, sur deux registres. Le registre "
+         "quantitatif porte la cible et les effectifs atteints — ventilés femmes, jeunes et "
+         "personnes handicapées —, le nombre de ménages et leur taille moyenne, le revenu annuel "
+         "et le taux de pauvreté de référence. Le registre qualitatif porte les critères et la "
+         "méthode de sélection, les besoins exprimés, les contraintes, les bénéfices attendus, le "
+         "mode de participation, le degré de vulnérabilité et le mécanisme de gestion des "
+         "plaintes ouvert au groupe.",
+         ["Le taux d'atteinte et la part des femmes atteintes sont calculés à partir des "
+          "effectifs saisis : ils ne peuvent être renseignés à la main, donc ni arrondis ni "
+          "arrangés.",
+          "Un indicateur peut être rattaché à un groupe de bénéficiaires. Le rattachement relie "
+          "la population visée à la mesure du changement : la fiche du groupe affiche alors les "
+          "indicateurs qui le documentent, leur taux d'atteinte et leur part de femmes.",
+          "La synthèse signale les groupes ciblés qu'aucun indicateur ne mesure — angle mort "
+          "fréquent d'un dispositif de suivi, où une population figure au document de projet "
+          "sans qu'aucune donnée n'en rende compte."]),
+        ("5.16 Partenaires",
+         "Registre des organisations parties au montage : type, rôle dans le dispositif, "
+         "contribution financière conventionnée et effectivement décaissée, contribution "
+         "technique, échéances de convention et appréciation de la performance.",
+         ["Le taux de décaissement est calculé par partenaire et pour l'ensemble du montage : "
+          "il révèle les engagements annoncés mais non honorés, première cause de décalage entre "
+          "le budget planifié et le budget disponible.",
+          "Les conventions arrivant à échéance sont signalées, afin que leur renouvellement soit "
+          "engagé avant l'interruption des financements."]),
+        ("5.17 Évaluation selon les critères du CAD de l'OCDE",
+         "Conduite des exercices évaluatifs — évaluation de référence, à mi-parcours, finale, "
+         "ex-post — notés sur les six critères du Comité d'aide au développement : pertinence, "
+         "cohérence, efficacité, efficience, impact et durabilité.",
+         ["La notation suit une échelle à six niveaux qui écarte délibérément la note médiane "
+          "neutre : l'évaluateur doit se prononcer du côté satisfaisant ou insatisfaisant.",
+          "Chaque critère s'accompagne de ses points d'examen — les questions auxquelles la note "
+          "doit répondre — et d'une justification écrite obligatoire : une note sans "
+          "justification est refusée.",
+          "La synthèse produit la moyenne par critère sur l'ensemble des évaluations achevées, "
+          "ce qui met en évidence la dimension sur laquelle le projet est systématiquement le "
+          "plus faible.",
+          "Les recommandations portent leur criticité, la réponse du management — acceptée, "
+          "partiellement acceptée, rejetée —, le responsable, l'échéance et le taux de mise en "
+          "œuvre ; celles qui sont échues et non soldées sont signalées."]),
+        ("5.18 Évaluation d'impact",
+         "Conception et suivi des études visant à établir l'effet propre du projet, c'est-à-dire "
+         "la part du changement qui lui est imputable et non aux évolutions du contexte. Neuf "
+         "méthodes sont documentées, chacune avec son hypothèse d'identification, ses conditions "
+         "d'application, ses forces et ses limites.",
+         ["Les méthodes expérimentales — essai randomisé contrôlé, randomisation par grappes — "
+          "reposent sur l'affectation aléatoire, qui rend les groupes comparables en espérance "
+          "sur toutes les caractéristiques, observées comme non observées.",
+          "Les méthodes quasi-expérimentales — doubles différences, appariement par score de "
+          "propension, combinaison des deux, régression sur discontinuité, variables "
+          "instrumentales, contrôle synthétique — s'appliquent lorsque la randomisation est "
+          "impossible, au prix d'une hypothèse d'identification explicite qui doit être discutée.",
+          "La comparaison avant-après est proposée mais présentée pour ce qu'elle est : une "
+          "description, non une mesure d'impact, puisqu'elle confond l'effet du projet avec tout "
+          "ce qui a changé par ailleurs.",
+          "Un calculateur de taille d'échantillon donne l'effectif requis par bras à partir de "
+          "l'effet minimal détectable, de l'écart-type de l'indicateur, de la puissance et du "
+          "seuil de signification. Lorsque la randomisation porte sur des grappes, il applique "
+          "l'effet de plan 1 + (m − 1) × ρ : avec des grappes de 30 unités et une corrélation "
+          "intra-grappe de 0,08, l'échantillon requis est multiplié par 3,3.",
+          "Le contrôle de puissance compare l'échantillon prévu à l'échantillon requis et "
+          "signale une étude sous-dimensionnée, c'est-à-dire une étude qui risque de conclure à "
+          "l'absence d'effet alors qu'un effet réel existe."]),
+        ("5.19 Administration",
+         "Gestion des comptes, des rôles, des accès par projet, des clés d'API et consultation "
+         "du journal d'audit.",
          ["Cinq rôles hiérarchisés déterminent les droits : lecteur, opérateur de saisie, "
-          "responsable de suivi-évaluation, coordonnateur, administrateur.",
+          "responsable de suivi-évaluation, coordonnateur, administrateur. Le rôle est doublé "
+          "d'un rattachement projet par projet : un utilisateur ne voit que les projets dont il "
+          "est membre.",
+          "L'ouverture d'un compte engendre un mot de passe provisoire et un lien de "
+          "confirmation d'adresse, montrés une seule fois à l'administrateur qui le crée. La "
+          "connexion reste refusée tant que le lien n'a pas été ouvert.",
+          "Les clés d'API sont nominatives, limitées à un projet, en lecture seule, datées et "
+          "révocables ; seule leur empreinte est conservée.",
           "Le journal d'audit conserve l'horodatage, l'auteur, l'action, l'entité concernée et "
           "le projet, pour toutes les opérations d'écriture."]),
     ]
@@ -1183,6 +1277,21 @@ def construire(chemin_sortie: str) -> str:
               "cartographiables dans Power BI ou un SIG, collecte par activité"],
              ["Revue qualité SMART", "Excel",
               "Diagnostic critère par critère, score du système, actions correctrices"],
+             ["Bénéficiaires : ciblage et caractérisation", "Excel",
+              "Quantification et atteinte par groupe, caractérisation qualitative, indicateurs "
+              "rattachés à chaque groupe"],
+             ["Partenaires : engagements et performance", "Excel",
+              "Contributions conventionnées et décaissées, taux de décaissement, échéances de "
+              "convention"],
+             ["Évaluation CAD-OCDE", "Excel",
+              "Notes et justifications par critère, moyennes consolidées, registre des "
+              "recommandations et de leur mise en œuvre"],
+             ["Rapport d'évaluation CAD-OCDE", "Word",
+              "Rapport structuré critère par critère, échelle de notation, justifications et "
+              "suivi des recommandations"],
+             ["Protocole d'évaluation d'impact", "Word",
+              "Méthode et hypothèse d'identification, groupes de traitement et de comparaison, "
+              "contrôle de puissance, résultats et signification statistique"],
              ["Tableau de bord", "Excel", "Indicateurs clés, graphiques natifs Excel, feuille "
                                           "d'alertes, détail des indicateurs"],
              ["Jeu de données Power BI", "Excel", "Modèle en étoile, dimension calendrier, notice "
@@ -1398,17 +1507,111 @@ def construire(chemin_sortie: str) -> str:
 
     titre2(document, "11.1 Rôles et droits")
     tableau(document, ["Rôle", "Droits accordés"],
-            [["Lecteur", "Consultation de toutes les vues et téléchargement des livrables"],
+            [["Lecteur", "Consultation et téléchargement des livrables, sur les seuls projets "
+                         "dont il est membre"],
              ["Opérateur de saisie", "Droits du lecteur, plus création et modification des "
                                      "données : indicateurs, réalisations, activités, lignes "
                                      "budgétaires, risques, questionnaires"],
              ["Responsable suivi-évaluation", "Droits précédents, plus création et paramétrage "
                                               "de projets et consultation du journal d'audit"],
              ["Coordonnateur", "Droits précédents, dans une logique de pilotage et de validation"],
-             ["Administrateur", "Accès complet, gestion des comptes utilisateurs et des rôles"]],
+             ["Administrateur", "Accès complet, gestion des comptes, des rôles, des accès par "
+                                "projet et des clés d'API"]],
             largeurs=[4.5, 12])
+    para(document,
+         "Le rôle détermine ce qu'un utilisateur peut faire ; le rattachement au projet détermine "
+         "sur quoi il peut le faire. Les deux contrôles sont indépendants et cumulatifs, et tous "
+         "deux sont appliqués par le serveur : l'interface masque des écrans selon le rôle, mais "
+         "cette décision est cosmétique et ne conditionne aucun accès.")
 
-    titre2(document, "11.2 Traçabilité")
+    titre2(document, "11.2 Principes de conception retenus")
+    for intitule, texte in [
+        ("Aucun secret dans le dépôt",
+         "Il n'existe ni clé, ni jeton, ni mot de passe inscrit dans le code ou dans les fichiers "
+         "de configuration versionnés. En production, l'absence de clé de signature empêche le "
+         "démarrage plutôt que de retomber silencieusement sur une valeur connue de tous. Si "
+         "aucun mot de passe administrateur n'est fourni, la plateforme en engendre un "
+         "aléatoirement et l'inscrit une seule fois dans les journaux de démarrage."),
+        ("Le navigateur ne décide de rien",
+         "Chaque appel revérifie côté serveur l'authentification, le rôle et l'appartenance de "
+         "l'objet manipulé à un projet autorisé. Un identifiant deviné dans une URL ne donne "
+         "rien. Les projets étant énumérables par construction, un accès refusé répond 404 et "
+         "non 403 : la réponse ne confirme pas l'existence de la ressource."),
+        ("Le serveur ne fait confiance à rien de ce qu'il reçoit",
+         "Les champs modifiables sont définis par liste blanche : un client qui ajoute un rôle, "
+         "un état de compte ou une empreinte de mot de passe à sa requête voit ces champs "
+         "ignorés. Aucune requête n'est construite par concaténation de texte, et les jokers des "
+         "recherches sont échappés."),
+        ("Tout texte affiché est échappé",
+         "Les libellés, énoncés, commentaires et recommandations issus des données sont échappés "
+         "avant insertion dans le HTML ou le SVG. Un énoncé d'indicateur contenant du balisage "
+         "s'affiche comme du texte. La politique de sécurité du contenu interdit par ailleurs "
+         "tout script en ligne et tout script d'origine externe."),
+    ]:
+        puce(document, f"{intitule} — {texte}")
+
+    titre2(document, "11.3 Mesures appliquées")
+    tableau(document, ["Domaine", "Mesure"],
+            [["Mots de passe",
+              "PBKDF2-SHA256, 240 000 itérations, sel aléatoire par compte. Politique imposée : "
+              "12 caractères au minimum, au moins trois classes de caractères, refus des mots de "
+              "passe courants, des suites de caractères et de tout mot de passe contenant le nom "
+              "ou l'adresse du compte."],
+             ["Sessions",
+              "Jeton signé HMAC-SHA256 déposé dans un cookie HttpOnly, SameSite=Strict et Secure "
+              "en production : le JavaScript ne peut pas le lire. Aucun jeton en stockage local. "
+              "Chaque compte peut fermer toutes ses sessions d'un appel."],
+             ["Force brute",
+              "Verrouillage progressif du compte après échecs répétés. Message d'échec unique et "
+              "comparaison à durée constante même lorsque le compte n'existe pas : l'API ne "
+              "permet pas d'énumérer les comptes."],
+             ["Limitation de débit",
+              "Fenêtre glissante par adresse et par catégorie d'appel, avec des quotas distincts "
+              "pour l'authentification, les écritures, les exports et la lecture. Plafond de "
+              "taille sur le corps des requêtes."],
+             ["En-têtes",
+              "Politique de sécurité du contenu, interdiction d'inclusion dans un cadre, "
+              "politique de référent, HSTS en production, absence de mise en cache des réponses "
+              "d'API."],
+             ["Origines",
+              "Partage entre origines fermé par défaut : sans configuration explicite, aucune "
+              "origine tierce n'est acceptée."],
+             ["Comptes",
+              "Aucune inscription libre : les comptes sont ouverts par un administrateur. "
+              "L'adresse doit être confirmée par un lien à jeton — à usage unique, avec une "
+              "réponse indistincte en cas de jeton faux — avant toute connexion. Changement du "
+              "mot de passe imposé au premier accès."],
+             ["Clés d'API",
+              "Le flux Power BI n'utilise plus de jeton de session dans l'URL mais des clés "
+              "nominatives, en lecture seule, limitées à un projet, datées, révocables et "
+              "stockées hachées : leur valeur n'est affichée qu'à la création."],
+             ["Téléversements",
+              "Plafond de taille, contrôle du nombre magique du fichier et non de son extension, "
+              "refus des archives dont le ratio de décompression dépasse le seuil, analyse en "
+              "mémoire sans écriture sur le disque."],
+             ["Erreurs",
+              "Aucune trace d'exécution renvoyée au client : une erreur produit un identifiant "
+              "de corrélation affiché à l'utilisateur et une entrée complète dans les journaux "
+              "du serveur."],
+             ["Dépendances",
+              "Dix dépendances directes, toutes épinglées à une version précise et vérifiées, "
+              "aucune dépendance JavaScript. Revue trimestrielle recommandée."]],
+            largeurs=[3.5, 13])
+
+    titre2(document, "11.4 Jeu de vérification")
+    para(document,
+         "Les mesures ci-dessus sont éprouvées par un jeu de cinquante-et-un contrôles automatisés "
+         "exécutés contre l'application réelle, sur une base temporaire, par la commande "
+         "« python scripts/verifier_securite.py » : refus des identifiants erronés avec message "
+         "indistinct, attributs du cookie de session, présence et contenu des en-têtes, refus "
+         "systématique des appels anonymes, tentative d'élévation de privilège par le corps de la "
+         "requête, cycle complet de confirmation d'adresse avec rejeu d'un jeton déjà consommé, "
+         "cloisonnement d'un lecteur non membre, politique de mot de passe, téléversements piégés, "
+         "jokers dans la recherche et fermeture effective de la session. La commande sort en "
+         "erreur dès qu'un contrôle échoue : elle peut être intégrée à une chaîne d'intégration "
+         "continue.")
+
+    titre2(document, "11.5 Traçabilité")
     para(document,
          "Toute opération d'écriture — création, modification, suppression, import — est inscrite "
          "au journal d'audit avec son horodatage, l'adresse de son auteur, l'entité concernée et "
@@ -1416,14 +1619,16 @@ def construire(chemin_sortie: str) -> str:
          "administrateurs, constitue l'élément de preuve requis lors des audits de qualité des "
          "données et des missions de supervision.")
 
-    titre2(document, "11.3 Recommandations de mise en production")
+    titre2(document, "11.6 Recommandations de mise en production")
     for texte in [
-        "Modifier impérativement le mot de passe administrateur et la clé de signature des jetons "
-        "avant toute mise en service.",
-        "Restreindre les origines autorisées au seul domaine de l'application, plutôt que de "
-        "conserver la valeur permissive par défaut.",
-        "Ne pas diffuser les liens Power BI : ils incorporent un jeton portant les droits de "
-        "l'utilisateur qui les a générés.",
+        "Renseigner la clé de signature des jetons et le mot de passe administrateur avant "
+        "l'ouverture du service ; le blueprint de déploiement engendre la première "
+        "automatiquement.",
+        "Restreindre les origines autorisées au seul domaine de l'application si des appels "
+        "entre domaines sont nécessaires ; sans configuration, aucune origine tierce n'est "
+        "acceptée.",
+        "Révoquer les clés d'API dès qu'un utilisateur quitte le projet : elles survivent à la "
+        "fermeture de sa session.",
         "Créer un compte nominatif par utilisateur, plutôt qu'un compte partagé, afin que le "
         "journal d'audit conserve sa valeur probante.",
         "Attribuer le rôle strictement nécessaire à chaque utilisateur, et réserver le rôle "
@@ -1441,6 +1646,34 @@ def construire(chemin_sortie: str) -> str:
          "La séquence ci-après permet de rendre un projet pleinement opérationnel dans la "
          "plateforme. Elle suppose que le cadre logique et le budget du projet ont été validés.")
 
+    titre2(document, "12.1 Les deux projets d'exemple")
+    para(document,
+         "Une instance neuve est livrée avec deux projets complets, destinés à servir de cas "
+         "pratiques. Ils permettent de parcourir chaque écran avec des données cohérentes avant "
+         "de saisir son propre projet, et de comparer ce que l'on a renseigné à ce qu'un "
+         "dispositif complet contient.")
+    tableau(document, ["Projet", "Secteur", "Contenu renseigné"],
+            [["PADRA-2025 — Programme d'appui au développement rural et à l'agriculture",
+              "Agriculture, sécurité alimentaire",
+              "Cadre logique complet, zones d'intervention, indicateurs désagrégés, activités "
+              "ordonnancées avec antécédences, budget, risques, hypothèses, parties prenantes et "
+              "matrice RACI, instruments de collecte"],
+             ["PASSE-2026 — Programme de santé scolaire et de scolarisation des filles",
+              "Éducation, santé",
+              "Huit zones, trois effets et cinq produits, cinq groupes de bénéficiaires, six "
+              "partenaires, dix-sept indicateurs dont trois de processus, trente-sept cibles et "
+              "cent une réalisations réparties par zone et par sexe, treize activités enchaînées, "
+              "quatorze lignes budgétaires, sept risques, six hypothèses, treize parties "
+              "prenantes et soixante-quinze affectations RACI, deux évaluations CAD assorties de "
+              "quatre recommandations, deux études d'impact — un essai randomisé par grappes et "
+              "une combinaison doubles différences et appariement —, deux questionnaires"]],
+            largeurs=[5, 3, 8.5], taille=9)
+    para(document,
+         "Le second projet renseigne l'ensemble des rubriques de la plateforme, y compris celles "
+         "que les dispositifs réels laissent le plus souvent vides. La variable "
+         "SEPIA_SEED_DEMO fixée à 0 permet de démarrer sur une instance vierge.")
+
+    titre2(document, "12.2 Séquence de mise en œuvre")
     etapes = [
         ("Créer le projet",
          "Vue Portefeuille, bouton « Nouveau projet ». Renseigner le code, l'intitulé, le "
@@ -1509,6 +1742,19 @@ def construire(chemin_sortie: str) -> str:
          "l'équilibre territorial dans la vue Zones et l'inclusivité dans la vue Équité, "
          "documenter les causes des écarts et arrêter les mesures correctrices lors de la revue "
          "périodique."),
+        ("Évaluer",
+         "Ouvrir un exercice évaluatif dans la vue Évaluation CAD-OCDE, noter chacun des six "
+         "critères en justifiant la note au regard des points d'examen, puis enregistrer les "
+         "recommandations avec leur criticité, la réponse du management, un responsable et une "
+         "échéance. Le suivi de leur mise en œuvre se fait ensuite depuis la même vue : une "
+         "recommandation échue et non soldée y est signalée."),
+        ("Mesurer l'impact",
+         "Concevoir l'étude dans la vue Évaluation d'impact avant le démarrage des activités : "
+         "choisir la méthode et expliciter son hypothèse d'identification, définir la règle "
+         "d'affectation, puis dimensionner l'échantillon à l'aide du calculateur — en renseignant "
+         "l'écart-type de l'indicateur de résultat et, en cas de randomisation par grappes, la "
+         "taille des grappes et la corrélation intra-grappe. Une étude dimensionnée après coup ne "
+         "peut plus l'être : l'affectation a déjà eu lieu."),
         ("Produire les rapports et livrables",
          "Depuis la vue Rapports périodiques, choisir la période et générer le rapport "
          "trimestriel, semestriel ou annuel après en avoir vérifié l'aperçu. Depuis la vue "
@@ -1565,12 +1811,18 @@ def construire(chemin_sortie: str) -> str:
     titre2(document, "13.4 Variables d'environnement")
     tableau(document, ["Variable", "Rôle", "Valeur par défaut"],
             [["DATABASE_URL", "Chaîne de connexion PostgreSQL", "SQLite local"],
-             ["SEPIA_SECRET_KEY", "Clé de signature des jetons", "valeur de développement"],
+             ["SEPIA_ENV", "« production » active les garde-fous bloquants : cookie Secure, "
+                           "HSTS, erreurs non détaillées",
+              "production si DATABASE_URL est définie"],
+             ["SEPIA_SECRET_KEY", "Clé de signature des jetons",
+              "obligatoire en production : le démarrage est refusé sans elle"],
              ["SEPIA_ADMIN_EMAIL", "Compte administrateur initial", "admin@sepia.org"],
-             ["SEPIA_ADMIN_PASSWORD", "Mot de passe initial", "sepia2024"],
+             ["SEPIA_ADMIN_PASSWORD", "Mot de passe initial",
+              "aucun : engendré aléatoirement et journalisé une seule fois"],
              ["SEPIA_TOKEN_TTL", "Durée de validité des jetons, en secondes", "43200"],
-             ["SEPIA_SEED_DEMO", "Chargement du projet de démonstration", "1"],
-             ["SEPIA_CORS_ORIGINS", "Origines autorisées", "*"]],
+             ["SEPIA_SEED_DEMO", "Chargement des projets d'exemple", "1"],
+             ["SEPIA_CORS_ORIGINS", "Origines autorisées pour les appels entre domaines",
+              "vide : aucune origine tierce"]],
             largeurs=[5, 7.5, 4], taille=9.5)
 
     encadre(document, "Point de vigilance",
@@ -1719,6 +1971,35 @@ def construire(chemin_sortie: str) -> str:
                                          "délais, participation) plutôt que le changement produit"],
              ["GAR", "Gestion axée sur les résultats : approche centrée sur l'atteinte de "
                      "résultats mesurables"],
+             ["CAD", "Comité d'aide au développement de l'OCDE, dont les six critères — "
+                     "pertinence, cohérence, efficacité, efficience, impact, durabilité — "
+                     "constituent le cadre de référence de l'évaluation"],
+             ["Contrefactuel", "Ce qui serait advenu en l'absence du projet. Il n'est jamais "
+                               "observable : toute évaluation d'impact consiste à l'estimer"],
+             ["Groupe de comparaison", "Population non exposée au projet, servant à estimer le "
+                                       "contrefactuel"],
+             ["Essai randomisé contrôlé", "Étude où l'affectation au traitement est tirée au "
+                                          "sort, ce qui rend les groupes comparables en espérance "
+                                          "sur toutes les caractéristiques"],
+             ["Doubles différences", "Comparaison de l'évolution du groupe traité et de celle du "
+                                     "groupe de comparaison, ce qui neutralise les différences de "
+                                     "niveau initial constantes dans le temps"],
+             ["Score de propension", "Probabilité estimée d'être traité compte tenu des "
+                                     "caractéristiques observées ; l'appariement sur ce score "
+                                     "constitue un groupe de comparaison plausible"],
+             ["Hypothèse d'identification", "Condition sous laquelle l'écart mesuré s'interprète "
+                                            "comme un effet causal. Elle doit être énoncée et "
+                                            "discutée : c'est elle qui fonde la validité de "
+                                            "l'étude"],
+             ["Puissance statistique", "Probabilité de détecter un effet lorsqu'il existe "
+                                       "réellement. Une étude sous-dimensionnée conclut à "
+                                       "l'absence d'effet faute d'observations, non faute d'effet"],
+             ["Effet de plan", "Facteur multipliant la taille d'échantillon requise lorsque "
+                               "l'affectation porte sur des grappes plutôt que sur des individus, "
+                               "égal à 1 + (m − 1) × ρ"],
+             ["Corrélation intra-grappe", "Part de la variance de l'indicateur attribuable aux "
+                                          "différences entre grappes ; plus elle est élevée, plus "
+                                          "l'échantillon requis augmente"],
              ["SMART", "Critères de qualité d'un indicateur : spécifique, mesurable, atteignable, "
                        "pertinent, temporellement défini"],
              ["PTBA", "Plan de travail et budget annuel"],
@@ -1736,23 +2017,28 @@ def construire(chemin_sortie: str) -> str:
         "│   ├── main.py                  Application FastAPI",
         "│   ├── config.py                Configuration et référentiels",
         "│   ├── database.py              Moteur SQLAlchemy",
-        "│   ├── models.py                Quinze entités du modèle de données",
-        "│   ├── security.py              Authentification et contrôle d'accès",
-        "│   ├── crud.py                  Fabrique de routeurs CRUD",
-        "│   ├── seed.py                  Projet de démonstration",
+        "│   ├── models.py                Vingt-quatre entités du modèle de données",
+        "│   ├── security.py              Mots de passe, sessions, clés d'API",
+        "│   ├── middleware.py            En-têtes, limitation de débit, erreurs",
+        "│   ├── crud.py                  Fabrique de routeurs CRUD et contrôle d'accès",
+        "│   ├── seed.py                  Compte initial et projets d'exemple",
+        "│   ├── seed_sante.py            Second projet d'exemple, intégralement renseigné",
         "│   ├── routers/",
         "│   │   ├── auth.py              Authentification et comptes",
         "│   │   ├── projects.py          Projets, tableaux de bord, référentiels",
         "│   │   ├── entities.py          Entités métier",
+        "│   │   ├── evaluations.py       Bénéficiaires, partenaires, CAD, impact",
         "│   │   ├── imports.py           Imports Excel, Word, XLSForm, Kobo",
         "│   │   ├── exports.py           Génération des livrables",
         "│   │   └── powerbi.py           Flux de business intelligence",
         "│   └── services/",
         "│       ├── analytics.py         Moteur de performance",
         "│       ├── planning.py          Chemin critique, PERT, courbe en S, WBS, RACI",
+        "│       ├── evaluation.py        Notation CAD, bénéficiaires, partenaires, impact",
         "│       ├── portability.py       Export et import JSON (projet, portefeuille)",
         "│       ├── excel_export.py      Générateurs Excel",
         "│       ├── word_export.py       Générateurs Word",
+        "│       ├── evaluation_export.py Livrables des modules d'évaluation",
         "│       ├── xlsform.py           Générateur XLSForm",
         "│       └── importer.py          Analyseurs Excel et Word",
         "├── static/",
@@ -1761,9 +2047,12 @@ def construire(chemin_sortie: str) -> str:
         "│   └── js/",
         "│       ├── core.js              État, API, composants d'interface",
         "│       ├── charts.js            Graphiques SVG",
-        "│       ├── views.js             Quatorze vues fonctionnelles",
+        "│       ├── views.js             Vues de planification, de suivi et d'analyse",
+        "│       ├── views-evaluation.js  Bénéficiaires, partenaires, CAD, impact",
         "│       └── app.js               Navigation et cycle de vie",
-        "├── scripts/generer_documentation.py",
+        "├── scripts/",
+        "│   ├── generer_documentation.py Production du présent document",
+        "│   └── verifier_securite.py     Jeu de vérification des garde-fous",
         "├── docs/                        Documentation Word",
         "├── requirements.txt             Dépendances Python",
         "├── render.yaml                  Description d'infrastructure Render",

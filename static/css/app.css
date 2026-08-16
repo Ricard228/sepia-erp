@@ -55,6 +55,8 @@ a { color: var(--bleu-clair); }
 .carte-connexion .btn-bloc { margin-top: 1.4rem; }
 .aide-connexion { margin-top: 1.2rem; font-size: .74rem; color: var(--gris); text-align: center; }
 .erreur { color: var(--rouge); font-size: .82rem; margin-top: .7rem; min-height: 1rem; }
+/* Le même emplacement porte aussi les confirmations : le vert les distingue. */
+.erreur.succes { color: var(--vert); }
 
 /* ------------------------------------------------------------------ Boutons */
 .btn {

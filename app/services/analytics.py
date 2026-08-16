@@ -895,10 +895,14 @@ def analyse_periode(db: Session, project_id: int, periode: str,
     }
 
 
-def portefeuille(db: Session) -> List[Dict[str, Any]]:
-    """Vue consolidée multi-projets (niveau programme)."""
+def portefeuille(db: Session,
+                 identifiants_autorises: Optional[List[int]] = None) -> List[Dict[str, Any]]:
+    """Vue consolidée multi-projets, restreinte aux projets accessibles."""
     resultat = []
-    for project in db.query(Project).order_by(Project.code).all():
+    requete = db.query(Project)
+    if identifiants_autorises is not None:
+        requete = requete.filter(Project.id.in_(identifiants_autorises or [0]))
+    for project in requete.order_by(Project.code).all():
         indicateurs = synthese_indicateurs(db, project.id)
         budget = synthese_budget(db, project.id)
         activites = synthese_activites(db, project.id)

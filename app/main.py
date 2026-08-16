@@ -1,4 +1,5 @@
 """Point d'entrée de la plateforme SEPIA (FastAPI)."""
+import logging
 import os
 
 from fastapi import FastAPI, Request
@@ -6,9 +7,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from .config import APP_LONG_NAME, APP_NAME, APP_VERSION, DATABASE_URL, SEED_DEMO
+from .config import (APP_LONG_NAME, APP_NAME, APP_VERSION, DATABASE_URL, EST_PRODUCTION,
+                     SEED_DEMO)
 from .database import Base, SessionLocal, assurer_schema, engine
-from .routers import auth, entities, exports, imports, powerbi, projects
+from .middleware import EntetesSecurite, LimitationDebit, TailleRequete, enregistrer_erreur
+from .routers import auth, entities, evaluations, exports, imports, powerbi, projects
 from .seed import initialiser
 
 RACINE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -28,17 +31,31 @@ app = FastAPI(
     openapi_url="/api/openapi.json",
 )
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=os.getenv("SEPIA_CORS_ORIGINS", "*").split(","),
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# L'interface est servie par la même origine que l'API : aucune origine tierce
+# n'a donc besoin d'y accéder. Autoriser « * » avec des cookies de session
+# reviendrait à laisser n'importe quel site interroger la plateforme au nom de
+# l'utilisateur connecté.
+_origines = [o.strip() for o in os.getenv("SEPIA_CORS_ORIGINS", "").split(",") if o.strip()]
+if _origines:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_origines,
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type", "X-API-Key"],
+        max_age=600,
+    )
+
+app.add_middleware(EntetesSecurite)
+app.add_middleware(LimitationDebit)
+app.add_middleware(TailleRequete)
 
 
 @app.on_event("startup")
 def demarrage() -> None:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s — %(message)s")
     Base.metadata.create_all(bind=engine)
     assurer_schema()
     db = SessionLocal()
@@ -46,19 +63,22 @@ def demarrage() -> None:
         initialiser(db, avec_demo=SEED_DEMO)
     finally:
         db.close()
+    if not EST_PRODUCTION:
+        logging.getLogger("sepia").warning(
+            "Instance démarrée en mode développement : messages d'erreur détaillés, "
+            "cookies non restreints à HTTPS. Définissez SEPIA_ENV=production avant "
+            "toute mise en service.")
 
 
 @app.exception_handler(Exception)
 async def erreur_non_geree(request: Request, exc: Exception):
-    return JSONResponse(
-        status_code=500,
-        content={"detail": f"Erreur interne : {type(exc).__name__} — {exc}"},
-    )
+    return enregistrer_erreur(request, exc)
 
 
 app.include_router(auth.router)
 app.include_router(projects.router)
 app.include_router(entities.router)
+app.include_router(evaluations.router)
 app.include_router(imports.router)
 app.include_router(exports.router)
 app.include_router(powerbi.router)

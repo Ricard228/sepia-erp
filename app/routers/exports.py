@@ -10,11 +10,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
-from ..crud import ensure_project
+from ..crud import ensure_project, projets_autorises, verifier_acces_projet
 from ..database import get_db
 from ..models import Form, Project, User
 from ..security import current_user
-from ..services import analytics, excel_export, portability, word_export, xlsform
+from ..services import (analytics, evaluation_export, excel_export, portability,
+                        word_export, xlsform)
 
 router = APIRouter(prefix="/api/exports", tags=["Exports"])
 
@@ -100,6 +101,23 @@ LIVRABLES = [
      "description": "KPI, graphiques, alertes et détail des indicateurs."},
     {"cle": "powerbi-dataset", "libelle": "Jeu de données Power BI", "format": "Excel",
      "description": "Modèle en étoile (dimensions et faits) avec notice de branchement."},
+    {"cle": "beneficiaires-excel", "libelle": "Bénéficiaires : ciblage et caractérisation",
+     "format": "Excel",
+     "description": "Effectifs ciblés et atteints désagrégés, caractérisation qualitative, "
+                    "indicateurs rattachés à chaque groupe."},
+    {"cle": "partenaires-excel", "libelle": "Partenaires : engagements et performance",
+     "format": "Excel",
+     "description": "Conventions, contributions financières et en nature, obligations, "
+                    "appréciation et risques."},
+    {"cle": "evaluation-cad-excel", "libelle": "Évaluation CAD-OCDE", "format": "Excel",
+     "description": "Notation par critère, justifications et suivi des recommandations."},
+    {"cle": "evaluation-cad-word", "libelle": "Rapport d'évaluation CAD-OCDE", "format": "Word",
+     "description": "Rapport rédigé : cadre d'évaluation, notes justifiées par critère, "
+                    "constats, leçons et recommandations."},
+    {"cle": "evaluation-impact-word", "libelle": "Protocole d'évaluation d'impact",
+     "format": "Word",
+     "description": "Devis, hypothèse d'identification, puissance statistique, résultats et "
+                    "précautions d'interprétation."},
     {"cle": "projet-json", "libelle": "Projet complet (sauvegarde SEPIA)", "format": "JSON",
      "description": "Sauvegarde intégrale et réversible du projet, questionnaires compris, "
                     "rechargeable sur une autre instance."},
@@ -153,6 +171,16 @@ def _produire(cle: str, db: Session, projet: Project, annee: Optional[int] = Non
     if cle == "organisation-word":
         return word_export.organisation_projet_docx(db, projet), \
             _nom_fichier(projet, "Organisation_et_ordonnancement", "docx"), MIME_DOCX
+    if cle == "beneficiaires-excel":
+        return evaluation_export.beneficiaires_xlsx(db, projet),             _nom_fichier(projet, "Beneficiaires", "xlsx"), MIME_XLSX
+    if cle == "partenaires-excel":
+        return evaluation_export.partenaires_xlsx(db, projet),             _nom_fichier(projet, "Partenaires", "xlsx"), MIME_XLSX
+    if cle == "evaluation-cad-excel":
+        return evaluation_export.evaluation_cad_xlsx(db, projet),             _nom_fichier(projet, "Evaluation_CAD_OCDE", "xlsx"), MIME_XLSX
+    if cle == "evaluation-cad-word":
+        return evaluation_export.evaluation_cad_docx(db, projet),             _nom_fichier(projet, "Rapport_evaluation_CAD_OCDE", "docx"), MIME_DOCX
+    if cle == "evaluation-impact-word":
+        return evaluation_export.evaluation_impact_docx(db, projet),             _nom_fichier(projet, "Protocole_evaluation_impact", "docx"), MIME_DOCX
     if cle == "projet-json":
         contenu = portability.exporter_projet(db, projet)
         donnees = json.dumps(contenu, ensure_ascii=False, indent=2).encode("utf-8")
@@ -218,9 +246,13 @@ def exporter_portefeuille_json(projets: Optional[str] = Query(
         None, description="Identifiants séparés par des virgules ; toutes les fiches par défaut"),
         db: Session = Depends(get_db), user: User = Depends(current_user)):
     """Sauvegarde intégrale du portefeuille : tous les projets dans un fichier unique."""
+    autorises = projets_autorises(db, user)
     identifiants = None
     if projets:
-        identifiants = [int(p) for p in projets.split(",") if p.strip().isdigit()]
+        identifiants = [int(p) for p in projets.split(",")[:200] if p.strip().isdigit()]
+    if autorises is not None:
+        identifiants = ([i for i in identifiants if i in autorises] if identifiants
+                        else autorises) or [0]
     contenu = portability.exporter_portefeuille(db, identifiants)
     donnees = json.dumps(contenu, ensure_ascii=False, indent=2).encode("utf-8")
     nom = f"SEPIA_Portefeuille_{contenu['nb_projets']}_projets_{date.today().isoformat()}.json"
@@ -231,6 +263,7 @@ def exporter_portefeuille_json(projets: Optional[str] = Query(
 def telecharger(project_id: int, cle: str, annee: Optional[int] = Query(None),
                 periode: str = Query(""), db: Session = Depends(get_db),
                 user: User = Depends(current_user)):
+    verifier_acces_projet(db, user, project_id)
     projet = ensure_project(db, project_id)
     if cle == "dossier-complet":
         return _dossier_complet(db, projet)
@@ -299,6 +332,7 @@ def questionnaire_word(form_id: int, db: Session = Depends(get_db),
     form = db.get(Form, form_id)
     if not form:
         raise HTTPException(status_code=404, detail="Formulaire introuvable.")
+    verifier_acces_projet(db, user, form.project_id)
     projet = ensure_project(db, form.project_id)
     nom = re.sub(r"[^0-9A-Za-z_-]+", "_", f"{projet.code}_{form.name}")[:60]
     return _reponse(word_export.questionnaire_docx(db, form, projet), f"{nom}.docx", MIME_DOCX)
@@ -310,6 +344,7 @@ def questionnaire_xlsform(form_id: int, db: Session = Depends(get_db),
     form = db.get(Form, form_id)
     if not form:
         raise HTTPException(status_code=404, detail="Formulaire introuvable.")
+    verifier_acces_projet(db, user, form.project_id)
     projet = ensure_project(db, form.project_id)
     nom = re.sub(r"[^0-9A-Za-z_-]+", "_", f"XLSForm_{projet.code}_{form.name}")[:60]
     return _reponse(xlsform.xlsform_xlsx(form, projet), f"{nom}.xlsx", MIME_XLSX)
@@ -322,6 +357,7 @@ def fiche_indicateur(indicator_id: int, db: Session = Depends(get_db),
     indicateur = db.get(Indicator, indicator_id)
     if not indicateur:
         raise HTTPException(status_code=404, detail="Indicateur introuvable.")
+    verifier_acces_projet(db, user, indicateur.project_id)
     projet = ensure_project(db, indicateur.project_id)
     return _reponse(word_export.fiches_indicateurs_docx(db, projet, indicator_id),
                     _nom_fichier(projet, f"Fiche_{indicateur.code or indicator_id}", "docx"),

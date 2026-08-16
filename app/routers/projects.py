@@ -8,10 +8,12 @@ from ..config import (CATEGORIES_DESAGREGATION, CATEGORIES_RISQUE, CRITERES_SMAR
                       LIBELLES_NIVEAUX, MODALITES_DESAGREGATION, NIVEAUX_CADRE_LOGIQUE,
                       NIVEAUX_ZONE, STATUTS_PROJET, TYPES_INDICATEUR, TYPES_QUESTION,
                       TYPES_RAPPORT)
-from ..crud import apply_payload, log_action, serialize, serialize_many
+from ..crud import (apply_payload, filtrer_par_acces, log_action, projets_autorises,
+                    serialize, serialize_many, verifier_acces_projet)
 from ..database import get_db
 from ..models import (Activity, Assumption, AuditLog, BudgetLine, Form, FormQuestion, Indicator,
-                      IndicatorActual, IndicatorTarget, LogframeElement, Project, Risk, User)
+                      IndicatorActual, IndicatorTarget, LogframeElement, Project, ProjectMember,
+                      Risk, User)
 from ..security import can_edit, can_manage, current_user
 from ..services import analytics
 
@@ -20,12 +22,15 @@ router = APIRouter(prefix="/api", tags=["Projets"])
 
 @router.get("/projects")
 def liste_projets(db: Session = Depends(get_db), user: User = Depends(current_user)):
-    return serialize_many(db.query(Project).order_by(Project.code).all())
+    """Projets accessibles à l'utilisateur, et non l'ensemble de la base."""
+    requete = filtrer_par_acces(db.query(Project), Project, db, user)
+    return serialize_many(requete.order_by(Project.code).all())
 
 
 @router.get("/projects/{project_id}")
 def detail_projet(project_id: int, db: Session = Depends(get_db),
                   user: User = Depends(current_user)):
+    verifier_acces_projet(db, user, project_id)
     projet = db.get(Project, project_id)
     if not projet:
         raise HTTPException(status_code=404, detail="Projet introuvable.")
@@ -53,6 +58,9 @@ def creer_projet(payload: Dict[str, Any], db: Session = Depends(get_db),
     apply_payload(projet, payload, Project)
     db.add(projet)
     db.flush()
+    # Le créateur devient membre du projet : sans cela, un responsable S&E
+    # perdrait immédiatement l'accès au projet qu'il vient de créer.
+    db.add(ProjectMember(project_id=projet.id, user_id=user.id, role="responsable"))
     log_action(db, user, "CREATE", "Project", projet.id, projet.id, projet.code)
     db.commit()
     db.refresh(projet)
@@ -62,6 +70,7 @@ def creer_projet(payload: Dict[str, Any], db: Session = Depends(get_db),
 @router.put("/projects/{project_id}")
 def modifier_projet(project_id: int, payload: Dict[str, Any], db: Session = Depends(get_db),
                     user: User = Depends(can_manage)):
+    verifier_acces_projet(db, user, project_id)
     projet = db.get(Project, project_id)
     if not projet:
         raise HTTPException(status_code=404, detail="Projet introuvable.")
@@ -75,6 +84,7 @@ def modifier_projet(project_id: int, payload: Dict[str, Any], db: Session = Depe
 @router.delete("/projects/{project_id}")
 def supprimer_projet(project_id: int, db: Session = Depends(get_db),
                      user: User = Depends(can_manage)):
+    verifier_acces_projet(db, user, project_id)
     projet = db.get(Project, project_id)
     if not projet:
         raise HTTPException(status_code=404, detail="Projet introuvable.")
@@ -103,6 +113,7 @@ def supprimer_projet(project_id: int, db: Session = Depends(get_db),
 @router.post("/projects/{project_id}/dupliquer", status_code=201)
 def dupliquer_projet(project_id: int, payload: Dict[str, Any], db: Session = Depends(get_db),
                      user: User = Depends(can_manage)):
+    verifier_acces_projet(db, user, project_id)
     """Duplique la structure d'un projet (cadre logique, indicateurs, activités, budget, risques)
     sans reprendre les réalisations : utile pour créer un projet à partir d'un modèle."""
     source = db.get(Project, project_id)
@@ -181,6 +192,7 @@ def dupliquer_projet(project_id: int, payload: Dict[str, Any], db: Session = Dep
 @router.get("/dashboard/{project_id}")
 def tableau_de_bord(project_id: int, db: Session = Depends(get_db),
                     user: User = Depends(current_user)):
+    verifier_acces_projet(db, user, project_id)
     donnees = analytics.tableau_de_bord(db, project_id)
     if not donnees:
         raise HTTPException(status_code=404, detail="Projet introuvable.")
@@ -189,7 +201,7 @@ def tableau_de_bord(project_id: int, db: Session = Depends(get_db),
 
 @router.get("/portefeuille")
 def vue_portefeuille(db: Session = Depends(get_db), user: User = Depends(current_user)):
-    projets = analytics.portefeuille(db)
+    projets = analytics.portefeuille(db, projets_autorises(db, user))
     total_budget = sum(p["total_budget"] or 0 for p in projets)
     return {
         "projets": projets,
@@ -209,6 +221,7 @@ def vue_portefeuille(db: Session = Depends(get_db), user: User = Depends(current
 def tableau_suivi_indicateurs(project_id: int, db: Session = Depends(get_db),
                               user: User = Depends(current_user)):
     """Cadre de suivi des indicateurs : cibles et réalisations par période."""
+    verifier_acces_projet(db, user, project_id)
     indicateurs = db.query(Indicator).filter(Indicator.project_id == project_id).all()
     periodes = sorted({t.period_label for i in indicateurs for t in i.targets} |
                       {a.period_label for i in indicateurs for a in i.actuals})
@@ -259,17 +272,23 @@ def referentiels(user: User = Depends(current_user)):
 
 
 @router.get("/journal")
-def journal_audit(project_id: int = Query(None), limit: int = Query(200, le=1000),
+def journal_audit(project_id: int = Query(None), limit: int = Query(200, ge=1, le=1000),
                   db: Session = Depends(get_db), user: User = Depends(can_manage)):
     requete = db.query(AuditLog).order_by(AuditLog.at.desc())
     if project_id:
+        verifier_acces_projet(db, user, project_id)
         requete = requete.filter(AuditLog.project_id == project_id)
+    else:
+        autorises = projets_autorises(db, user)
+        if autorises is not None:
+            requete = requete.filter(AuditLog.project_id.in_(autorises or [0]))
     return serialize_many(requete.limit(limit).all())
 
 
 @router.post("/projects/{project_id}/periodes", status_code=201)
 def generer_periodes(project_id: int, payload: Dict[str, Any], db: Session = Depends(get_db),
                      user: User = Depends(can_edit)):
+    verifier_acces_projet(db, user, project_id)
     """Crée automatiquement les cibles périodiques d'un indicateur par interpolation linéaire
     entre la valeur de référence et la cible finale."""
     indicateur = db.get(Indicator, payload.get("indicator_id"))

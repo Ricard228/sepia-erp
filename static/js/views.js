@@ -1208,8 +1208,8 @@
             { titre: 'Code', rendu: (l) => (l.critique ? '🔴 ' : '') + ech(l.code || '') },
             { cle: 'name', titre: 'Activité' },
             { titre: 'Durée', classe: 'centre', rendu: (l) => l.duree + ' j' },
-            { titre: 'Antécédents', rendu: (l) => l.antecedents.join(', ') || '—' },
-            { titre: 'Successeurs', rendu: (l) => l.successeurs.join(', ') || '—' },
+            { titre: 'Antécédents', rendu: (l) => ech(l.antecedents.join(', ')) || '—' },
+            { titre: 'Successeurs', rendu: (l) => ech(l.successeurs.join(', ')) || '—' },
             { titre: 'Début tôt', classe: 'centre', rendu: (l) => S.dateFr(l.date_debut_tot) },
             { titre: 'Fin tôt', classe: 'centre', rendu: (l) => S.dateFr(l.date_fin_tot) },
             { titre: 'Début tard', classe: 'centre', rendu: (l) => S.dateFr(l.date_debut_tard) },
@@ -1747,7 +1747,7 @@
           { cle: 'target_respondent', titre: 'Population cible' },
           { cle: 'periodicity', titre: 'Périodicité', classe: 'centre' },
           { cle: 'version', titre: 'Version', classe: 'centre' },
-          { titre: 'Indicateurs', rendu: (l) => (l.linked_indicators || []).join(', ') || '—' }
+          { titre: 'Indicateurs', rendu: (l) => ech((l.linked_indicators || []).join(', ')) || '—' }
         ], formulaires, [
           { cle: 'concevoir', libelle: '🧩', titre: 'Concevoir les questions', classe: 'btn-primaire' },
           { cle: 'word', libelle: '📄', titre: 'Questionnaire Word' },
@@ -2016,40 +2016,57 @@
       if (!projet()) { conteneur.innerHTML = exigeProjet(); return; }
       const d = await S.API.get('/api/powerbi/' + projet() + '/lien');
       const origine = window.location.origin;
-      const jeton = S.Etat.jeton;
-      const urlDataset = origine + '/api/powerbi/' + projet() + '/dataset?token=' + jeton;
+      const cles = await S.API.get('/api/auth/cles').catch(() => []);
+      const actives = cles.filter((c) => !c.revoquee);
+      const urlDataset = origine + '/api/powerbi/' + projet() + '/dataset?cle=VOTRE_CLE';
 
       conteneur.innerHTML =
-        S.carte('Méthode 1 — Connexion directe (actualisation à la demande)',
+        S.carte("Cl\u00e9s d'acc\u00e8s en lecture seule",
+          '<p style="font-size:.86rem">Un connecteur externe n\'utilise jamais votre session : ' +
+          'il s\'authentifie par une <strong>cl\u00e9 d\u00e9di\u00e9e</strong>, limit\u00e9e \u00e0 la lecture, ' +
+          'r\u00e9vocable individuellement et assortie d\'une date d\'expiration. La cl\u00e9 n\'est ' +
+          'affich\u00e9e qu\'une seule fois, \u00e0 sa cr\u00e9ation.</p>' +
+          (actives.length ? S.tableau([
+            { cle: 'label', titre: 'Intitul\u00e9' },
+            { titre: 'Pr\u00e9fixe', rendu: (l) => '<code>' + ech(l.prefixe) + '</code>' },
+            { titre: 'Port\u00e9e', classe: 'centre', rendu: (l) => ech(l.portee) },
+            { titre: 'Projet', classe: 'centre', rendu: (l) => l.project_id ? ('#' + l.project_id) : 'Tous' },
+            { titre: 'Expire le', rendu: (l) => S.dateFr(l.expire_le) },
+            { titre: 'Dernier usage', rendu: (l) => l.derniere_utilisation ? S.dateFr(l.derniere_utilisation) : 'jamais' }
+          ], actives, [{ cle: 'revoquer', libelle: '\ud83d\udeab R\u00e9voquer', classe: 'btn-danger' }])
+            : S.vide('Aucune cl\u00e9 active. Cr\u00e9ez-en une pour brancher Power BI.', '\ud83d\udd11')),
+          '<button class="btn btn-primaire btn-petit" id="creer-cle">\u2795 Cr\u00e9er une cl\u00e9</button>',
+          "R\u00e9voquez une cl\u00e9 d\u00e8s qu'elle n'est plus utilis\u00e9e : elle donne acc\u00e8s aux donn\u00e9es du projet.") +
+        S.carte('M\u00e9thode 1 \u2014 Connexion directe (actualisation \u00e0 la demande)',
           '<ol style="font-size:.86rem;line-height:1.7">' +
-          '<li>Ouvrir <strong>Power BI Desktop</strong> puis <em>Accueil &gt; Obtenir des données &gt; Web</em>.</li>' +
-          '<li>Coller l\'URL ci-dessous dans le champ « URL ».</li>' +
-          '<li>Dans l\'éditeur Power Query, développer la colonne <code>tables</code> puis chaque table souhaitée.</li>' +
-          '<li>Créer les relations entre <code>Dim_*</code> et <code>Fait_*</code> dans la vue Modèle.</li>' +
+          '<li>Cr\u00e9er une cl\u00e9 ci-dessus et la copier imm\u00e9diatement.</li>' +
+          '<li>Ouvrir <strong>Power BI Desktop</strong> puis <em>Accueil &gt; Obtenir des donn\u00e9es &gt; Web</em>.</li>' +
+          '<li>Coller l\'URL ci-dessous en rempla\u00e7ant <code>VOTRE_CLE</code> par la cl\u00e9 obtenue.</li>' +
+          '<li>Dans l\'\u00e9diteur Power Query, d\u00e9velopper la colonne <code>tables</code> puis chaque table souhait\u00e9e.</li>' +
+          '<li>Cr\u00e9er les relations entre <code>Dim_*</code> et <code>Fait_*</code> dans la vue Mod\u00e8le.</li>' +
           '</ol>' +
           '<pre class="code">' + ech(urlDataset) + '</pre>' +
-          '<button class="btn btn-secondaire btn-petit" id="copier-url">📋 Copier l\'URL</button>' +
-          '<p style="font-size:.76rem;color:#EA8600;margin-top:.7rem">⚠️ Ce lien contient votre jeton d\'accès personnel, valable 12 heures. Ne le partagez pas.</p>') +
-        S.carte('Méthode 2 — Classeur Excel structuré',
-          '<p style="font-size:.86rem">Le classeur « Jeu de données Power BI » contient le modèle en étoile ' +
-          'complet (dimensions et tables de faits), une dimension calendrier et une notice détaillée ' +
-          'des relations et mesures DAX à créer. Il convient lorsque la plateforme n\'est pas accessible ' +
-          'depuis le poste d\'analyse.</p>' +
-          '<button class="btn btn-primaire btn-petit" id="btn-dataset">⬇️ Télécharger le classeur</button>') +
+          '<button class="btn btn-secondaire btn-petit" id="copier-url">\ud83d\udccb Copier le gabarit</button>' +
+          '<p style="font-size:.76rem;color:#5F6368;margin-top:.7rem">La cl\u00e9 peut aussi \u00eatre ' +
+          'transmise par l\'en-t\u00eate <code>X-API-Key</code>, ce qui \u00e9vite de la faire figurer ' +
+          'dans une URL \u2014 pr\u00e9f\u00e9rable d\u00e8s que l\'outil le permet.</p>') +
+        S.carte('M\u00e9thode 2 \u2014 Classeur Excel structur\u00e9',
+          '<p style="font-size:.86rem">Le classeur \u00ab Jeu de donn\u00e9es Power BI \u00bb contient le mod\u00e8le en \u00e9toile ' +
+          'complet, une dimension calendrier et une notice des relations et mesures DAX \u00e0 cr\u00e9er. ' +
+          'Il convient lorsque la plateforme n\'est pas accessible depuis le poste d\'analyse.</p>' +
+          '<button class="btn btn-primaire btn-petit" id="btn-dataset">\u2b07\ufe0f T\u00e9l\u00e9charger le classeur</button>') +
         S.carte('Tables disponibles',
           '<div class="tableau-conteneur"><table class="tableau"><thead><tr><th>Table</th>' +
-          '<th>URL JSON</th><th class="centre">CSV</th></tr></thead><tbody>' +
+          '<th>URL JSON</th></tr></thead><tbody>' +
           d.tables.map(function (chemin) {
             const nom = chemin.split('/table/')[1].split('?')[0];
             return '<tr><td><strong>' + ech(nom) + '</strong></td>' +
-              '<td style="font-size:.72rem;word-break:break-all">' + ech(origine + chemin) + '</td>' +
-              '<td class="centre"><button class="btn btn-petit btn-secondaire" data-csv="' + nom +
-              '">⬇️ CSV</button></td></tr>';
+              '<td style="font-size:.72rem;word-break:break-all">' + ech(origine + chemin) + '</td></tr>';
           }).join('') + '</tbody></table></div>') +
-        S.carte('Mesures DAX recommandées',
-          '<pre class="code">Taux de réalisation = \n' +
+        S.carte('Mesures DAX recommand\u00e9es',
+          '<pre class="code">Taux de r\u00e9alisation = \n' +
           'DIVIDE(SUM(Fait_Realisation[ValeurRealisee]), SUM(Fait_Cible[ValeurCible]))\n\n' +
-          'Taux d\'exécution budgétaire = \n' +
+          'Taux d\'ex\u00e9cution budg\u00e9taire = \n' +
           'DIVIDE(SUM(Fait_Budget[Decaisse]), SUM(Fait_Budget[TotalPlanifie]))\n\n' +
           'Avancement physique moyen = AVERAGE(Fait_Activite[Avancement])\n\n' +
           'Risques critiques = \n' +
@@ -2057,15 +2074,47 @@
 
       document.getElementById('copier-url').addEventListener('click', function () {
         navigator.clipboard.writeText(urlDataset).then(
-          () => S.notifier('URL copiée dans le presse-papiers.', 'succes'),
-          () => S.notifier('Copie impossible : sélectionnez et copiez l\'URL manuellement.', 'erreur'));
+          () => S.notifier('Gabarit copi\u00e9 : remplacez VOTRE_CLE par la cl\u00e9 cr\u00e9\u00e9e.', 'succes'),
+          () => S.notifier('Copie impossible : s\u00e9lectionnez et copiez l\'URL manuellement.', 'erreur'));
       });
       document.getElementById('btn-dataset').addEventListener('click',
         () => S.API.telecharger('/api/exports/' + projet() + '/powerbi-dataset'));
-      conteneur.querySelectorAll('[data-csv]').forEach(function (bouton) {
-        bouton.addEventListener('click', function () {
-          window.open('/api/powerbi/' + projet() + '/csv/' + bouton.dataset.csv + '?token=' + jeton, '_blank');
+      document.getElementById('creer-cle').addEventListener('click', function () {
+        S.formulaireModal('Cr\u00e9er une cl\u00e9 de lecture', [
+          { nom: 'label', libelle: "Intitul\u00e9 de la cl\u00e9", obligatoire: true,
+            aide: "Nommez la cl\u00e9 d'apr\u00e8s son usage, par exemple \u00ab Rapport Power BI direction \u00bb." },
+          { nom: 'jours', libelle: 'Dur\u00e9e de validit\u00e9 (jours)', type: 'number', largeur: 'courte' },
+          { nom: 'restreindre', libelle: 'Port\u00e9e', type: 'checkbox',
+            texteCase: 'Limiter la cl\u00e9 au projet courant (recommand\u00e9)' }
+        ], { jours: 90, restreindre: true }, async function (donnees) {
+          const r = await S.API.post('/api/auth/cles', {
+            label: donnees.label, jours: donnees.jours || 90,
+            project_id: donnees.restreindre ? projet() : null
+          });
+          S.fermerModale();
+          S.ouvrirModale('Cl\u00e9 cr\u00e9\u00e9e \u2014 copiez-la maintenant',
+            '<div class="alerte alerte-warning"><span>' + ech(r.avertissement) + '</span></div>' +
+            '<pre class="code">' + ech(r.cle) + '</pre>' +
+            '<p style="font-size:.82rem">Expire le ' + S.dateFr(r.expire_le) + '.</p>', [
+              { libelle: 'Copier', classe: 'btn-primaire', action: function () {
+                navigator.clipboard.writeText(r.cle).then(
+                  () => S.notifier('Cl\u00e9 copi\u00e9e.', 'succes'),
+                  () => S.notifier('Copie impossible : s\u00e9lectionnez le texte.', 'erreur'));
+              } },
+              { libelle: 'Fermer', classe: 'btn-secondaire', action: function () {
+                S.fermerModale(); global.Application.rafraichir();
+              } }
+            ]);
         });
+      });
+      S.brancherActions(conteneur, {
+        revoquer: (id) => S.confirmer(
+          "R\u00e9voquer cette cl\u00e9 ? Les connecteurs qui l'utilisent cesseront de fonctionner.",
+          async function () {
+            await S.API.supprimer('/api/auth/cles/' + id);
+            S.notifier('Cl\u00e9 r\u00e9voqu\u00e9e.', 'succes');
+            global.Application.rafraichir();
+          })
       });
     }
   };
@@ -2092,9 +2141,25 @@
         { nom: 'password', libelle: utilisateur ? 'Nouveau mot de passe (laisser vide pour conserver)' : 'Mot de passe', type: 'password' },
         { nom: 'is_active', libelle: 'Compte actif', type: 'checkbox', texteCase: 'Le compte peut se connecter' }
       ], utilisateur || { role: 'lecteur', is_active: true }, async function (donnees) {
-        if (utilisateur) await S.API.put('/api/auth/utilisateurs/' + utilisateur.id, donnees);
-        else await S.API.post('/api/auth/utilisateurs', donnees);
-        S.notifier('Compte enregistré.', 'succes');
+        if (utilisateur) {
+          await S.API.put('/api/auth/utilisateurs/' + utilisateur.id, donnees);
+          S.notifier('Compte enregistré.', 'succes');
+        } else {
+          const cree = await S.API.post('/api/auth/utilisateurs', donnees);
+          // Mot de passe provisoire et lien de confirmation ne sont montrés
+          // qu'ici, une seule fois : ils ne sont plus consultables ensuite.
+          S.ouvrirModale('Éléments à transmettre au titulaire',
+            '<p style="font-size:.84rem">' + ech(cree.message || '') + '</p>' +
+            (cree.mot_de_passe_initial ?
+              '<p><strong>Mot de passe provisoire</strong><br>' +
+              '<code style="font-size:1rem">' + ech(cree.mot_de_passe_initial) + '</code></p>' : '') +
+            '<p><strong>Lien de confirmation d\'adresse</strong><br>' +
+            '<code style="font-size:.82rem;word-break:break-all">' +
+            ech(location.origin + (cree.lien_verification || '')) + '</code></p>' +
+            '<p style="font-size:.78rem;color:#5F6368">Transmettez ces éléments par deux canaux ' +
+            'distincts. La connexion reste refusée tant que le lien n\'a pas été ouvert.</p>',
+            [{ libelle: 'Fermer', classe: 'btn-primaire', action: S.fermerModale }]);
+        }
         global.Application.rafraichir();
       });
     },
@@ -2319,7 +2384,7 @@
           { cle: 'name', titre: 'Indicateur' },
           { titre: 'Niveau', classe: 'centre', rendu: (l) => badgeNiveau(l.level) },
           { cle: 'unit', titre: 'Unité', classe: 'centre' },
-          { titre: 'Désagrégations', rendu: (l) => (l.disaggregation || []).join(', ') || '—' },
+          { titre: 'Désagrégations', rendu: (l) => ech((l.disaggregation || []).join(', ')) || '—' },
           { titre: 'Dernière période', classe: 'centre', rendu: (l) => ech(l.derniere.period_label || '—') },
           { titre: 'Valeur consolidée', classe: 'nombre',
             rendu: (l) => S.nombre(l.derniere.actual_value, 2) +
@@ -2418,7 +2483,7 @@
       html += S.carte('Détail par indicateur', S.tableau([
         { titre: 'Code', rendu: (l) => ech(l.code || '') },
         { cle: 'name', titre: 'Indicateur' },
-        { titre: 'Désagrégations exigées', rendu: (l) => (l.categories_attendues || []).join(', ') || '—' },
+        { titre: 'Désagrégations exigées', rendu: (l) => ech((l.categories_attendues || []).join(', ')) || '—' },
         { titre: 'Manquantes', rendu: (l) => (l.categories_manquantes || []).length ?
           '<span class="etiquette" style="background:#EA8600">' +
           ech(l.categories_manquantes.join(', ')) + '</span>' : '<span style="color:#0F9D58">✔ complet</span>' },

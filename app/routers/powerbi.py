@@ -9,27 +9,64 @@ import io
 from datetime import date
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
+from ..crud import verifier_acces_projet
 from ..database import get_db
 from ..models import (Activity, BudgetLine, Indicator, LogframeElement, Project, Risk, User, Zone)
-from ..security import current_user, decode_token
+from ..security import NOM_COOKIE, current_user, decode_token, resoudre_cle_api
 from ..services import analytics
 
 router = APIRouter(prefix="/api/powerbi", tags=["Power BI"])
 
 
-def _autoriser(token: Optional[str], db: Session) -> User:
-    if not token:
-        raise HTTPException(status_code=401, detail="Jeton requis (paramètre ?token=).")
-    payload = decode_token(token)
-    if not payload:
-        raise HTTPException(status_code=401, detail="Jeton invalide ou expiré.")
-    user = db.query(User).filter(User.email == payload["sub"], User.is_active.is_(True)).first()
+def _autoriser(request: Request, cle: Optional[str], db: Session,
+               project_id: Optional[int] = None) -> User:
+    """Authentifie un connecteur de business intelligence.
+
+    Trois modes, du plus sûr au moins sûr : en-tête « X-API-Key », paramètre
+    « cle » d'URL — le connecteur Web de Power BI n'accepte pas d'en-tête
+    personnalisé —, ou cookie de session pour un appel depuis l'interface.
+    Le jeton de session n'est plus accepté en paramètre d'URL : il finissait
+    dans les journaux du serveur, l'historique du navigateur et le presse-papiers.
+    """
+    valeur = request.headers.get("x-api-key") or cle
+    if valeur:
+        acces = resoudre_cle_api(db, valeur)
+        if not acces:
+            raise HTTPException(status_code=401,
+                                detail="Clé d'accès inconnue, révoquée ou expirée.")
+        user = db.query(User).filter(User.id == acces.user_id,
+                                     User.is_active.is_(True)).first()
+        if not user:
+            raise HTTPException(status_code=401, detail="Compte associé à la clé désactivé.")
+        # Une clé peut être restreinte à un projet unique.
+        if acces.project_id and project_id and acces.project_id != int(project_id):
+            raise HTTPException(status_code=403,
+                                detail="Cette clé ne donne pas accès à ce projet.")
+        verifier_acces_projet(db, user, project_id)
+        return user
+
+    # Repli : session ouverte dans le navigateur (cookie ou en-tête Authorization).
+    charge = None
+    cookie = request.cookies.get(NOM_COOKIE)
+    entete = request.headers.get("authorization") or ""
+    if cookie:
+        charge = decode_token(cookie)
+    elif entete.lower().startswith("bearer "):
+        charge = decode_token(entete[7:].strip())
+    if not charge:
+        raise HTTPException(
+            status_code=401,
+            detail="Accès refusé. Créez une clé de lecture depuis votre profil et transmettez-la "
+                   "par l'en-tête X-API-Key ou le paramètre ?cle=.")
+    user = db.query(User).filter(User.email == charge.get("sub"),
+                                 User.is_active.is_(True)).first()
     if not user:
         raise HTTPException(status_code=401, detail="Compte introuvable ou désactivé.")
+    verifier_acces_projet(db, user, project_id)
     return user
 
 
@@ -126,9 +163,10 @@ def _tables(db: Session, project: Project) -> Dict[str, List[Dict[str, Any]]]:
 
 
 @router.get("/{project_id}/dataset")
-def dataset(project_id: int, token: Optional[str] = Query(None), db: Session = Depends(get_db)):
+def dataset(project_id: int, request: Request, cle: Optional[str] = Query(None),
+            db: Session = Depends(get_db)):
     """Modèle complet au format JSON, à consommer via Power BI > Obtenir des données > Web."""
-    _autoriser(token, db)
+    _autoriser(request, cle, db, project_id)
     projet = db.get(Project, project_id)
     if not projet:
         raise HTTPException(status_code=404, detail="Projet introuvable.")
@@ -139,10 +177,10 @@ def dataset(project_id: int, token: Optional[str] = Query(None), db: Session = D
 
 
 @router.get("/{project_id}/table/{nom_table}")
-def table_json(project_id: int, nom_table: str, token: Optional[str] = Query(None),
-               db: Session = Depends(get_db)):
+def table_json(project_id: int, nom_table: str, request: Request,
+               cle: Optional[str] = Query(None), db: Session = Depends(get_db)):
     """Une table unique en JSON — pratique pour créer une requête Power BI par table."""
-    _autoriser(token, db)
+    _autoriser(request, cle, db, project_id)
     projet = db.get(Project, project_id)
     if not projet:
         raise HTTPException(status_code=404, detail="Projet introuvable.")
@@ -154,10 +192,10 @@ def table_json(project_id: int, nom_table: str, token: Optional[str] = Query(Non
 
 
 @router.get("/{project_id}/csv/{nom_table}")
-def table_csv(project_id: int, nom_table: str, token: Optional[str] = Query(None),
-              db: Session = Depends(get_db)):
+def table_csv(project_id: int, nom_table: str, request: Request,
+              cle: Optional[str] = Query(None), db: Session = Depends(get_db)):
     """Export CSV (UTF-8 BOM, séparateur point-virgule) directement ouvrable dans Excel."""
-    _autoriser(token, db)
+    _autoriser(request, cle, db, project_id)
     projet = db.get(Project, project_id)
     if not projet:
         raise HTTPException(status_code=404, detail="Projet introuvable.")
@@ -179,22 +217,26 @@ def table_csv(project_id: int, nom_table: str, token: Optional[str] = Query(None
 
 
 @router.get("/{project_id}/lien")
-def lien_powerbi(project_id: int, request_token: str = Query(None, alias="token"),
-                 db: Session = Depends(get_db), user: User = Depends(current_user)):
+def lien_powerbi(project_id: int, db: Session = Depends(get_db),
+                 user: User = Depends(current_user)):
     """Retourne les URL prêtes à coller dans Power BI pour le projet courant."""
+    verifier_acces_projet(db, user, project_id)
     projet = db.get(Project, project_id)
     if not projet:
         raise HTTPException(status_code=404, detail="Projet introuvable.")
     return {
         "instructions": [
+            "Créer d'abord une clé de lecture depuis votre profil (Administration > Clés d'accès).",
             "Power BI Desktop > Accueil > Obtenir des données > Web.",
-            "Coller l'URL « dataset » ci-dessous, puis développer la colonne « tables ».",
+            "Coller l'URL « dataset » ci-dessous en remplaçant <CLE> par la clé obtenue, puis "
+            "développer la colonne « tables ».",
             "Ou créer une requête par table à partir des URL « tables ».",
-            "Le jeton expire au bout de 12 heures : régénérez-le depuis la plateforme.",
+            "La clé est révocable à tout moment et n'ouvre qu'un accès en lecture ; elle ne donne "
+            "pas accès à l'interface d'administration.",
         ],
-        "dataset": f"/api/powerbi/{project_id}/dataset?token=<JETON>",
-        "tables": [f"/api/powerbi/{project_id}/table/{nom}?token=<JETON>"
+        "dataset": f"/api/powerbi/{project_id}/dataset?cle=<CLE>",
+        "tables": [f"/api/powerbi/{project_id}/table/{nom}?cle=<CLE>"
                    for nom in _tables(db, projet)],
-        "csv": [f"/api/powerbi/{project_id}/csv/{nom}?token=<JETON>"
+        "csv": [f"/api/powerbi/{project_id}/csv/{nom}?cle=<CLE>"
                 for nom in _tables(db, projet)],
     }

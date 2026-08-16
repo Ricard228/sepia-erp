@@ -1,6 +1,8 @@
 """Import de projets depuis Excel, Word ou sauvegarde JSON, et alimentation par
 les données collectées."""
 import json
+import os
+import zipfile
 from io import BytesIO
 from typing import Any, Dict, List, Optional
 
@@ -8,7 +10,9 @@ from fastapi import APIRouter, Depends, File, Form as FormField, HTTPException, 
 from openpyxl import load_workbook
 from sqlalchemy.orm import Session
 
-from ..crud import ensure_project, log_action, serialize
+from ..config import (RATIO_DECOMPRESSION_MAX, SIGNATURES_FICHIERS,
+                      TAILLE_DECOMPRESSEE_MAX, TAILLE_MAX_TELEVERSEMENT)
+from ..crud import ensure_project, log_action, serialize, verifier_acces_projet
 from ..database import get_db
 from ..models import Form, FormQuestion, FormSubmission, Indicator, IndicatorActual, Project, User
 from ..security import can_edit, can_manage
@@ -17,16 +21,69 @@ from ..services.xlsform import _nom_technique
 
 router = APIRouter(prefix="/api/imports", tags=["Imports"])
 
-TAILLE_MAX = 20 * 1024 * 1024  # 20 Mo
+async def _lire(fichier: UploadFile, extensions: tuple) -> bytes:
+    """Lit un fichier téléversé après l'avoir contrôlé.
 
+    Quatre vérifications, dans cet ordre : extension déclarée, taille réelle,
+    signature binaire — l'extension seule se falsifie —, et pour les archives
+    (xlsx, docx sont des ZIP), le rapport de décompression, afin qu'un fichier de
+    quelques kilo-octets ne se déploie pas en plusieurs gigaoctets en mémoire.
+    """
+    nom = (fichier.filename or "").strip()
+    extension = os.path.splitext(nom.lower())[1]
+    if extension not in extensions:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Format attendu : {', '.join(extensions)}. Fichier reçu : "
+                   f"« {extension or 'sans extension'} ».")
+    if len(nom) > 200 or any(c in nom for c in ("\x00", "/", "\\", "..")):
+        raise HTTPException(status_code=422, detail="Nom de fichier invalide.")
 
-async def _lire(fichier: UploadFile) -> bytes:
     contenu = await fichier.read()
-    if len(contenu) > TAILLE_MAX:
-        raise HTTPException(status_code=413, detail="Fichier trop volumineux (20 Mo maximum).")
     if not contenu:
         raise HTTPException(status_code=422, detail="Le fichier reçu est vide.")
+    if len(contenu) > TAILLE_MAX_TELEVERSEMENT:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Fichier trop volumineux : la limite est de "
+                   f"{TAILLE_MAX_TELEVERSEMENT // (1024 * 1024)} Mo.")
+
+    signatures = SIGNATURES_FICHIERS.get(extension, [])
+    if signatures and not any(contenu.lstrip()[:8].startswith(s) for s in signatures):
+        raise HTTPException(
+            status_code=422,
+            detail="Le contenu du fichier ne correspond pas à son extension. Le téléversement "
+                   "est refusé par précaution.")
+
+    if extension in (".xlsx", ".xlsm", ".docx"):
+        _controler_archive(contenu)
     return contenu
+
+
+def _controler_archive(contenu: bytes) -> None:
+    """Refuse une archive dont la décompression serait disproportionnée."""
+    try:
+        with zipfile.ZipFile(BytesIO(contenu)) as archive:
+            if len(archive.infolist()) > 3000:
+                raise HTTPException(status_code=422,
+                                    detail="Archive refusée : nombre d'entrées anormalement élevé.")
+            decompresse = sum(info.file_size for info in archive.infolist())
+            for info in archive.infolist():
+                if info.filename.startswith("/") or ".." in info.filename:
+                    raise HTTPException(status_code=422,
+                                        detail="Archive refusée : chemin d'entrée suspect.")
+    except zipfile.BadZipFile:
+        raise HTTPException(status_code=422, detail="Fichier illisible : archive corrompue.")
+    if decompresse > TAILLE_DECOMPRESSEE_MAX:
+        raise HTTPException(
+            status_code=422,
+            detail="Archive refusée : sa décompression dépasserait la limite de mémoire "
+                   "autorisée.")
+    if len(contenu) and decompresse / len(contenu) > RATIO_DECOMPRESSION_MAX:
+        raise HTTPException(
+            status_code=422,
+            detail="Archive refusée : rapport de compression anormal, caractéristique d'un "
+                   "fichier piégé.")
 
 
 @router.post("/excel/{project_id}")
@@ -36,9 +93,8 @@ async def importer_excel(project_id: int, fichier: UploadFile = File(...),
     """Charge un cadre logique complet (résultats, indicateurs, activités, budget, risques)
     depuis un classeur Excel conforme au modèle SEPIA ou à une structure proche."""
     projet = ensure_project(db, project_id)
-    if not (fichier.filename or "").lower().endswith((".xlsx", ".xlsm")):
-        raise HTTPException(status_code=422, detail="Format attendu : .xlsx")
-    contenu = await _lire(fichier)
+    verifier_acces_projet(db, user, project_id)
+    contenu = await _lire(fichier, (".xlsx", ".xlsm"))
     try:
         rapport = importer.importer_excel(db, contenu, projet, remplacer=remplacer)
     except Exception as exc:
@@ -63,9 +119,7 @@ async def importer_sauvegarde_json(fichier: UploadFile = File(...),
     les références internes réécrites, si bien que le fichier peut provenir d'une
     autre instance de la plateforme.
     """
-    if not (fichier.filename or "").lower().endswith(".json"):
-        raise HTTPException(status_code=422, detail="Format attendu : .json")
-    contenu = await _lire(fichier)
+    contenu = await _lire(fichier, (".json",))
     try:
         donnees = json.loads(contenu.decode("utf-8-sig"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -88,9 +142,7 @@ async def importer_sauvegarde_json(fichier: UploadFile = File(...),
 @router.post("/word/analyser")
 async def analyser_word(fichier: UploadFile = File(...), user: User = Depends(can_edit)):
     """Inspecte un document Word et propose les tableaux exploitables."""
-    if not (fichier.filename or "").lower().endswith(".docx"):
-        raise HTTPException(status_code=422, detail="Format attendu : .docx")
-    contenu = await _lire(fichier)
+    contenu = await _lire(fichier, (".docx",))
     try:
         return importer.analyser_word(contenu)
     except Exception as exc:
@@ -104,9 +156,8 @@ async def importer_word(project_id: int, fichier: UploadFile = File(...),
                         db: Session = Depends(get_db), user: User = Depends(can_edit)):
     """Importe un cadre logique rédigé dans un document Word (matrice sous forme de tableau)."""
     projet = ensure_project(db, project_id)
-    if not (fichier.filename or "").lower().endswith(".docx"):
-        raise HTTPException(status_code=422, detail="Format attendu : .docx")
-    contenu = await _lire(fichier)
+    verifier_acces_projet(db, user, project_id)
+    contenu = await _lire(fichier, (".docx",))
     try:
         rapport = importer.importer_word(db, contenu, projet, index_tableau)
     except Exception as exc:
@@ -130,13 +181,12 @@ async def importer_reponses(form_id: int, fichier: UploadFile = File(...),
     form = db.get(Form, form_id)
     if not form:
         raise HTTPException(status_code=404, detail="Formulaire introuvable.")
-    if not (fichier.filename or "").lower().endswith((".xlsx", ".xlsm")):
-        raise HTTPException(status_code=422, detail="Format attendu : .xlsx")
-    contenu = await _lire(fichier)
+    verifier_acces_projet(db, user, form.project_id)
+    contenu = await _lire(fichier, (".xlsx", ".xlsm"))
     try:
-        classeur = load_workbook(BytesIO(contenu), data_only=True)
-    except Exception as exc:
-        raise HTTPException(status_code=422, detail=f"Classeur illisible : {exc}")
+        classeur = load_workbook(BytesIO(contenu), data_only=True, read_only=True)
+    except Exception:
+        raise HTTPException(status_code=422, detail="Classeur illisible ou corrompu.")
     feuille = classeur[classeur.sheetnames[0]]
     lignes = list(feuille.iter_rows(values_only=True))
     if len(lignes) < 2:
@@ -192,11 +242,12 @@ async def importer_xlsform(project_id: int, fichier: UploadFile = File(...),
                            db: Session = Depends(get_db), user: User = Depends(can_edit)):
     """Importe un XLSForm existant (feuilles survey/choices) comme formulaire SEPIA."""
     projet = ensure_project(db, project_id)
-    contenu = await _lire(fichier)
+    verifier_acces_projet(db, user, project_id)
+    contenu = await _lire(fichier, (".xlsx", ".xlsm"))
     try:
         classeur = load_workbook(BytesIO(contenu), data_only=True)
-    except Exception as exc:
-        raise HTTPException(status_code=422, detail=f"Classeur illisible : {exc}")
+    except Exception:
+        raise HTTPException(status_code=422, detail="Classeur illisible ou corrompu.")
     if "survey" not in [n.lower() for n in classeur.sheetnames]:
         raise HTTPException(status_code=422, detail="Le classeur ne contient pas de feuille « survey ».")
     nom_survey = next(n for n in classeur.sheetnames if n.lower() == "survey")

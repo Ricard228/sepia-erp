@@ -39,6 +39,37 @@ class User(Base, TimestampMixin):
     phone = Column(String(40))
     is_active = Column(Boolean, default=True)
     last_login = Column(DateTime)
+    # --- Sécurité du compte
+    email_verified = Column(Boolean, default=False)
+    verification_token = Column(String(80))
+    failed_attempts = Column(Integer, default=0)
+    locked_until = Column(DateTime)            # verrouillage temporaire après échecs
+    password_changed_at = Column(DateTime)
+    must_change_password = Column(Boolean, default=False)
+    # Invalide tous les jetons émis avant cette date (déconnexion globale).
+    tokens_valid_from = Column(DateTime)
+
+
+class ApiKey(Base, TimestampMixin):
+    """Clé d'accès en lecture seule, destinée aux connecteurs de business intelligence.
+
+    Une clé dédiée évite de faire circuler le jeton de session dans une URL
+    Power BI : elle est révocable individuellement, limitée à la lecture et
+    traçable, et son empreinte seule est conservée.
+    """
+    __tablename__ = "api_keys"
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    label = Column(String(120), nullable=False)
+    prefix = Column(String(12), nullable=False, index=True)   # partie visible, pour retrouver la clé
+    key_hash = Column(String(256), nullable=False)            # empreinte du secret
+    scope = Column(String(40), default="lecture")
+    project_id = Column(Integer, ForeignKey("projects.id", ondelete="CASCADE"))
+    expires_at = Column(DateTime)
+    last_used_at = Column(DateTime)
+    revoked = Column(Boolean, default=False)
+
+    user = relationship("User")
 
 
 class ProjectMember(Base, TimestampMixin):
@@ -149,6 +180,9 @@ class Indicator(Base, TimestampMixin):
     id = Column(Integer, primary_key=True)
     project_id = Column(Integer, ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
     element_id = Column(Integer, ForeignKey("logframe_elements.id", ondelete="SET NULL"), index=True)
+    # Groupe de bénéficiaires dont l'indicateur mesure la situation : il relie la
+    # mesure à la population concernée et permet d'agréger la performance par groupe.
+    beneficiary_id = Column(Integer, ForeignKey("beneficiaries.id", ondelete="SET NULL"), index=True)
     code = Column(String(30))
     name = Column(Text, nullable=False)
     definition = Column(Text)                       # définition opérationnelle
@@ -333,6 +367,228 @@ class Activity(Base, TimestampMixin):
     order_index = Column(Integer, default=0)
 
     project = relationship("Project", back_populates="activities")
+
+
+class Beneficiary(Base, TimestampMixin):
+    """Groupe de bénéficiaires : ciblage, effectifs désagrégés et caractérisation qualitative.
+
+    Un projet ne s'adresse jamais à une population indifférenciée : il cible des
+    groupes dont les besoins, les contraintes et les critères d'éligibilité
+    diffèrent. Cette entité les documente et permet de rattacher chaque
+    indicateur au groupe dont il mesure la situation.
+    """
+    __tablename__ = "beneficiaries"
+    id = Column(Integer, primary_key=True)
+    project_id = Column(Integer, ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
+    code = Column(String(30))
+    name = Column(String(200), nullable=False)
+    category = Column(String(80))              # Direct | Indirect | Final
+    typology = Column(String(120))             # Ménage, producteur, élève, structure…
+    zone_id = Column(Integer, ForeignKey("zones.id", ondelete="SET NULL"), index=True)
+
+    # --- Quantitatif : ciblage et atteinte, désagrégés
+    target_total = Column(Integer)             # effectif ciblé
+    target_women = Column(Integer)
+    target_youth = Column(Integer)
+    target_disabled = Column(Integer)
+    reached_total = Column(Integer)            # effectif effectivement atteint
+    reached_women = Column(Integer)
+    reached_youth = Column(Integer)
+    reached_disabled = Column(Integer)
+    households = Column(Integer)               # nombre de ménages concernés
+    average_household_size = Column(Float)
+    baseline_income = Column(Float)            # revenu moyen de référence
+    poverty_rate = Column(Float)               # taux de pauvreté du groupe (%)
+
+    # --- Qualitatif : ciblage, besoins, participation
+    selection_criteria = Column(Text)          # critères d'éligibilité
+    selection_method = Column(Text)            # ciblage géographique, communautaire, auto-ciblage…
+    needs = Column(Text)                       # besoins exprimés lors du diagnostic
+    constraints = Column(Text)                 # contraintes d'accès aux services du projet
+    expected_benefits = Column(Text)
+    participation_mode = Column(Text)          # modalités d'implication dans la mise en œuvre
+    vulnerability_level = Column(String(40))   # Très élevée | Élevée | Moyenne | Faible
+    grievance_mechanism = Column(Text)         # mécanisme de plainte accessible au groupe
+    comment = Column(Text)
+    order_index = Column(Integer, default=0)
+
+    zone = relationship("Zone")
+
+    @property
+    def taux_atteinte(self):
+        if not self.target_total:
+            return None
+        return round((self.reached_total or 0) / self.target_total * 100, 1)
+
+    @property
+    def part_femmes_atteintes(self):
+        if not self.reached_total:
+            return None
+        return round((self.reached_women or 0) / self.reached_total * 100, 1)
+
+
+class Partner(Base, TimestampMixin):
+    """Partenaire du projet : nature de la collaboration, engagement et performance."""
+    __tablename__ = "partners"
+    id = Column(Integer, primary_key=True)
+    project_id = Column(Integer, ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
+    code = Column(String(30))
+    name = Column(String(200), nullable=False)
+    partner_type = Column(String(80))          # Bailleur, ONG, État, secteur privé, recherche…
+    role = Column(Text)                        # rôle dans le dispositif
+    country = Column(String(120))
+    # --- Engagement contractuel
+    agreement_reference = Column(String(120))  # référence de la convention
+    agreement_start = Column(Date)
+    agreement_end = Column(Date)
+    financial_commitment = Column(Float)       # montant engagé
+    financial_disbursed = Column(Float)        # montant effectivement versé
+    currency = Column(String(10))
+    contribution_type = Column(String(120))    # Financière, technique, en nature, mixte
+    in_kind_description = Column(Text)
+    # --- Suivi de la relation
+    obligations = Column(Text)
+    deliverables = Column(Text)
+    performance_rating = Column(Integer)       # appréciation 1 à 5
+    performance_comment = Column(Text)
+    risks = Column(Text)                       # risques liés au partenariat
+    contact_name = Column(String(160))
+    contact_email = Column(String(160))
+    contact_phone = Column(String(60))
+    status = Column(String(40), default="Actif")
+    order_index = Column(Integer, default=0)
+
+    @property
+    def taux_decaissement(self):
+        if not self.financial_commitment:
+            return None
+        return round((self.financial_disbursed or 0) / self.financial_commitment * 100, 1)
+
+
+class Evaluation(Base, TimestampMixin):
+    """Exercice évaluatif apprécié selon les six critères du CAD de l'OCDE."""
+    __tablename__ = "evaluations"
+    id = Column(Integer, primary_key=True)
+    project_id = Column(Integer, ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
+    code = Column(String(30))
+    title = Column(String(300), nullable=False)
+    # Référence | Mi-parcours | Finale | Ex post | Thématique | Impact
+    evaluation_type = Column(String(60), default="Mi-parcours")
+    period_covered = Column(String(80))
+    start_date = Column(Date)
+    end_date = Column(Date)
+    status = Column(String(40), default="Planifiée")   # Planifiée|En cours|Achevée|Validée
+    evaluator = Column(String(200))
+    independence = Column(String(60))          # Interne | Externe indépendante | Mixte
+    budget = Column(Float)
+    methodology = Column(Text)
+    data_sources = Column(Text)
+    sampling = Column(Text)
+    limitations = Column(Text)
+    # Notes sur 6 et justifications, un couple par critère du CAD
+    scores = Column(JSON, default=dict)        # {"pertinence": 5, ...}
+    justifications = Column(JSON, default=dict)
+    key_findings = Column(Text)
+    lessons_learned = Column(Text)
+    overall_comment = Column(Text)
+    report_reference = Column(String(200))
+
+    recommendations = relationship("EvaluationRecommendation", cascade="all, delete-orphan",
+                                   back_populates="evaluation")
+
+    @property
+    def note_globale(self):
+        valeurs = [v for v in (self.scores or {}).values()
+                   if isinstance(v, (int, float)) and v > 0]
+        return round(sum(valeurs) / len(valeurs), 2) if valeurs else None
+
+
+class EvaluationRecommendation(Base, TimestampMixin):
+    """Recommandation issue d'une évaluation, suivie jusqu'à sa mise en œuvre."""
+    __tablename__ = "evaluation_recommendations"
+    id = Column(Integer, primary_key=True)
+    evaluation_id = Column(Integer, ForeignKey("evaluations.id", ondelete="CASCADE"),
+                           nullable=False, index=True)
+    code = Column(String(30))
+    criterion = Column(String(60))             # critère du CAD concerné
+    statement = Column(Text, nullable=False)
+    priority = Column(String(20), default="Moyenne")   # Élevée | Moyenne | Faible
+    responsible = Column(String(160))
+    deadline = Column(Date)
+    # Acceptée | Partiellement acceptée | Rejetée
+    management_response = Column(String(60), default="Acceptée")
+    response_comment = Column(Text)
+    implementation_status = Column(String(40), default="Non démarrée")
+    implementation_rate = Column(Float, default=0.0)
+    evidence = Column(Text)
+
+    evaluation = relationship("Evaluation", back_populates="recommendations")
+
+
+class ImpactStudy(Base, TimestampMixin):
+    """Devis d'évaluation d'impact : méthode d'identification, échantillon, résultats.
+
+    L'évaluation d'impact vise à isoler l'effet propre de l'intervention en
+    reconstituant le contrefactuel — ce qui serait advenu en son absence. Le
+    choix de la méthode dépend du mode d'affectation au traitement et de la
+    disponibilité de données avant/après.
+    """
+    __tablename__ = "impact_studies"
+    id = Column(Integer, primary_key=True)
+    project_id = Column(Integer, ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
+    evaluation_id = Column(Integer, ForeignKey("evaluations.id", ondelete="SET NULL"))
+    code = Column(String(30))
+    title = Column(String(300), nullable=False)
+    research_question = Column(Text)
+    hypothesis = Column(Text)
+    # --- Devis
+    approach = Column(String(40), default="Quasi-expérimentale")  # Expérimentale | Quasi | Non
+    method = Column(String(80))                # RCT, DID, PSM, RDD, IV, Contrôle synthétique…
+    identification_assumption = Column(Text)   # hypothèse d'identification de la méthode
+    assignment_rule = Column(Text)             # règle d'affectation au traitement
+    unit_of_analysis = Column(String(120))     # ménage, exploitation, école, village…
+    outcome_indicators = Column(JSON, default=list)   # codes d'indicateurs de résultat
+    covariates = Column(Text)                  # variables de contrôle
+    # --- Échantillon et puissance
+    treatment_size = Column(Integer)
+    control_size = Column(Integer)
+    clusters = Column(Integer)
+    intra_cluster_correlation = Column(Float)
+    minimum_detectable_effect = Column(Float)
+    # Écart-type de l'indicateur de résultat, exprimé dans la même unité que
+    # l'effet minimal. Sans lui, aucun calcul de puissance n'a de sens : le
+    # contrôle est alors signalé comme indisponible plutôt que calculé sur une
+    # valeur implicite.
+    outcome_sd = Column(Float)
+    power = Column(Float, default=0.8)
+    significance_level = Column(Float, default=0.05)
+    attrition_rate = Column(Float)
+    # --- Calendrier
+    baseline_date = Column(Date)
+    midline_date = Column(Date)
+    endline_date = Column(Date)
+    status = Column(String(40), default="Conçue")   # Conçue|Baseline|En cours|Analysée|Publiée
+    # --- Résultats
+    effect_estimate = Column(Float)            # effet moyen du traitement
+    standard_error = Column(Float)
+    p_value = Column(Float)
+    confidence_interval = Column(String(80))
+    effect_unit = Column(String(60))
+    robustness_checks = Column(Text)
+    threats_to_validity = Column(Text)
+    conclusion = Column(Text)
+    ethical_clearance = Column(Text)
+    data_repository = Column(String(300))
+
+    @property
+    def significatif(self):
+        if self.p_value is None:
+            return None
+        return self.p_value <= (self.significance_level or 0.05)
+
+    @property
+    def taille_echantillon(self):
+        return (self.treatment_size or 0) + (self.control_size or 0)
 
 
 class Stakeholder(Base, TimestampMixin):

@@ -17,8 +17,9 @@ from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.orm import Session
 
 from ..config import APP_NAME, APP_VERSION
-from ..models import (Activity, Assumption, BudgetLine, Form, FormQuestion, Indicator,
-                      IndicatorActual, IndicatorTarget, LogframeElement, Project,
+from ..models import (Activity, Assumption, Beneficiary, BudgetLine, Evaluation,
+                      EvaluationRecommendation, Form, FormQuestion, ImpactStudy, Indicator,
+                      IndicatorActual, IndicatorTarget, LogframeElement, Partner, Project,
                       RaciAssignment, Risk, Stakeholder, Zone)
 
 FORMAT_PROJET = "SEPIA-PROJET"
@@ -85,6 +86,16 @@ def exporter_projet(db: Session, project: Project) -> Dict[str, Any]:
         "projet": _serialiser(project),
         "zones": [_serialiser(z) for z in db.query(Zone).filter(
             Zone.project_id == project.id).order_by(Zone.id).all()],
+        "beneficiaires": [_serialiser(b) for b in db.query(Beneficiary).filter(
+            Beneficiary.project_id == project.id).order_by(Beneficiary.id).all()],
+        "partenaires": [_serialiser(p) for p in db.query(Partner).filter(
+            Partner.project_id == project.id).order_by(Partner.id).all()],
+        "evaluations": [
+            dict(_serialiser(e), recommandations=[_serialiser(r) for r in e.recommendations])
+            for e in db.query(Evaluation).filter(
+                Evaluation.project_id == project.id).order_by(Evaluation.id).all()],
+        "etudes_impact": [_serialiser(s) for s in db.query(ImpactStudy).filter(
+            ImpactStudy.project_id == project.id).order_by(ImpactStudy.id).all()],
         "cadre_logique": [_serialiser(e) for e in elements],
         "indicateurs": [_serialiser(i) for i in indicateurs],
         "cibles": [_serialiser(t) for t in db.query(IndicatorTarget).filter(
@@ -208,6 +219,12 @@ def importer_projet(db: Session, contenu: Dict[str, Any],
             objet.parent_id = zones.get(ligne["parent_id"])
     rapport["cree"]["zones"] = nb
 
+    beneficiaires, nb = creer(Beneficiary, contenu.get("beneficiaires"), "id",
+                              {"zone_id": zones})
+    rapport["cree"]["beneficiaires"] = nb
+    _, nb = creer(Partner, contenu.get("partenaires"), None)
+    rapport["cree"]["partenaires"] = nb
+
     elements, nb = creer(LogframeElement, contenu.get("cadre_logique"), "id")
     for ligne in contenu.get("cadre_logique") or []:
         if ligne.get("parent_id") and ligne["id"] in elements:
@@ -220,7 +237,7 @@ def importer_projet(db: Session, contenu: Dict[str, Any],
     rapport["cree"]["activites"] = nb
 
     indicateurs, nb = creer(Indicator, contenu.get("indicateurs"), "id",
-                            {"element_id": elements})
+                            {"element_id": elements, "beneficiary_id": beneficiaires})
     rapport["cree"]["indicateurs"] = nb
 
     _, nb = creer(IndicatorTarget, contenu.get("cibles"), None, {"indicator_id": indicateurs})
@@ -241,6 +258,28 @@ def importer_projet(db: Session, contenu: Dict[str, Any],
     _, nb = creer(RaciAssignment, contenu.get("raci"), None,
                   {"activity_id": activites, "stakeholder_id": parties})
     rapport["cree"]["affectations_raci"] = nb
+
+    evaluations: Dict[Any, int] = {}
+    nb_evaluations, nb_recommandations = 0, 0
+    for ligne in contenu.get("evaluations") or []:
+        evaluation = Evaluation(project_id=projet.id)
+        _appliquer(evaluation, ligne, Evaluation)
+        evaluation.project_id = projet.id
+        db.add(evaluation)
+        db.flush()
+        evaluations[ligne.get("id")] = evaluation.id
+        nb_evaluations += 1
+        for recommandation in ligne.get("recommandations") or []:
+            objet = EvaluationRecommendation(evaluation_id=evaluation.id)
+            _appliquer(objet, recommandation, EvaluationRecommendation)
+            objet.evaluation_id = evaluation.id
+            db.add(objet)
+            nb_recommandations += 1
+    rapport["cree"]["evaluations"] = nb_evaluations
+    rapport["cree"]["recommandations"] = nb_recommandations
+    _, nb = creer(ImpactStudy, contenu.get("etudes_impact"), None,
+                  {"evaluation_id": evaluations})
+    rapport["cree"]["etudes_impact"] = nb
 
     nb_formulaires, nb_questions = 0, 0
     for ligne in contenu.get("formulaires") or []:
@@ -312,8 +351,13 @@ def _supprimer_projet(db: Session, projet: Project) -> None:
     if formulaires:
         db.query(FormQuestion).filter(
             FormQuestion.form_id.in_(formulaires)).delete(synchronize_session=False)
-    for modele in (RaciAssignment, Stakeholder, BudgetLine, Activity, Indicator, Assumption,
-                   Risk, Form, Zone, LogframeElement):
+    db.query(EvaluationRecommendation).filter(
+        EvaluationRecommendation.evaluation_id.in_(
+            db.query(Evaluation.id).filter(Evaluation.project_id == projet.id))).delete(
+        synchronize_session=False)
+    for modele in (RaciAssignment, Stakeholder, BudgetLine, Activity, ImpactStudy, Evaluation,
+                   Indicator, Beneficiary, Partner, Assumption, Risk, Form, Zone,
+                   LogframeElement):
         db.query(modele).filter(modele.project_id == projet.id).delete(synchronize_session=False)
     db.delete(projet)
     db.flush()

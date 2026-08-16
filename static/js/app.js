@@ -12,6 +12,8 @@
     { groupe: 'Planification' },
     { cle: 'cadre-logique', libelle: 'Cadre logique', icone: '🧭' },
     { cle: 'indicateurs', libelle: 'Indicateurs', icone: '🎯' },
+    { cle: 'beneficiaires', libelle: 'Bénéficiaires', icone: '👥' },
+    { cle: 'partenaires', libelle: 'Partenaires', icone: '🤝' },
     { cle: 'zones', libelle: 'Zones d\'intervention', icone: '🗺️' },
     { cle: 'activites', libelle: 'Chronogramme', icone: '📅' },
     { cle: 'budget', libelle: 'PTBA et budget', icone: '💰' },
@@ -23,6 +25,8 @@
     { cle: 'equite', libelle: 'Équité et désagrégation', icone: '⚖️' },
     { cle: 'qualite', libelle: 'Qualité des indicateurs', icone: '🔍' },
     { cle: 'risques', libelle: 'Risques et hypothèses', icone: '⚠️' },
+    { cle: 'evaluation-cad', libelle: 'Évaluation CAD-OCDE', icone: '🎓' },
+    { cle: 'impact', libelle: 'Évaluation d\'impact', icone: '🔬' },
     { groupe: 'Rapportage' },
     { cle: 'rapports', libelle: 'Rapports périodiques', icone: '📑' },
     { cle: 'livrables', libelle: 'Livrables', icone: '📦' },
@@ -60,35 +64,65 @@
         if (cle !== S.Etat.vue) Application.naviguer(cle);
       });
 
-      if (S.Etat.jeton) {
-        try {
-          await Application.ouvrirSession();
-          return;
-        } catch (erreur) {
-          S.deconnexion();
-        }
+      // Lien de confirmation d'adresse : le jeton voyage dans le fragment, qui
+      // n'est pas transmis au serveur dans l'URL ni inscrit dans ses journaux.
+      await Application.confirmerAdresse();
+
+      // La session est portée par un cookie inaccessible au script : on tente
+      // simplement de lire le profil ; s'il répond, la session est ouverte.
+      try {
+        await Application.ouvrirSession();
+        return;
+      } catch (erreur) {
+        S.Etat.connecte = false;
       }
       document.getElementById('ecran-connexion').classList.remove('masque');
+    },
+
+    async confirmerAdresse() {
+      const correspondance = /^#verifier=([A-Za-z0-9_-]{16,})$/.exec(location.hash || '');
+      if (!correspondance) return;
+      location.hash = '';
+      try {
+        const reponse = await fetch('/api/auth/verifier-adresse', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin', body: JSON.stringify({ jeton: correspondance[1] })
+        });
+        const resultat = await reponse.json().catch(() => ({}));
+        const zone = document.getElementById('erreur-connexion');
+        if (zone) {
+          zone.textContent = resultat.message || 'Adresse confirmée.';
+          zone.classList.add('succes');
+        }
+      } catch (exception) {
+        // Une confirmation impossible ne doit pas empêcher l'affichage de l'écran
+        // de connexion : l'administrateur peut réémettre un lien.
+      }
     },
 
     async connexion(evenement) {
       evenement.preventDefault();
       const erreur = document.getElementById('erreur-connexion');
       erreur.textContent = '';
+      erreur.classList.remove('succes');
       const donnees = new FormData();
       donnees.append('username', document.getElementById('champ-email').value.trim().toLowerCase());
       donnees.append('password', document.getElementById('champ-motdepasse').value);
       S.basculeChargement(true);
       try {
-        const reponse = await fetch('/api/auth/login', { method: 'POST', body: donnees });
+        const reponse = await fetch('/api/auth/login', {
+          method: 'POST', body: donnees, credentials: 'same-origin'
+        });
         if (!reponse.ok) {
           const detail = await reponse.json().catch(() => ({}));
           throw new Error(detail.detail || 'Connexion impossible.');
         }
         const resultat = await reponse.json();
-        S.Etat.jeton = resultat.access_token;
-        localStorage.setItem('sepia_jeton', resultat.access_token);
+        S.Etat.connecte = true;
         await Application.ouvrirSession();
+        if (resultat.doit_changer_mot_de_passe) {
+          Application.demanderChangementMotDePasse();
+        }
       } catch (exception) {
         erreur.textContent = exception.message;
       } finally {
@@ -96,9 +130,48 @@
       }
     },
 
+    /* Un mot de passe provisoire doit être remplacé avant tout usage : la fenêtre
+       ne peut pas être fermée sans avoir défini un mot de passe conforme. */
+    async demanderChangementMotDePasse() {
+      const politique = await S.API.get('/api/auth/politique-mot-de-passe').catch(() => null);
+      const exigences = politique ?
+        '<div class="alerte alerte-info"><span>Exigences : ' +
+        politique.longueur_minimale + ' caractères au minimum, ' +
+        politique.classes_minimales + ' types de caractères parmi ' +
+        politique.classes.join(', ') + '. Sont refusés : ' +
+        politique.interdits.join(', ') + '.</span></div>' : '';
+      S.formulaireModal('Définir un nouveau mot de passe', [
+        { nom: 'mot_de_passe_actuel', libelle: 'Mot de passe provisoire', type: 'password',
+          obligatoire: true },
+        { nom: 'nouveau_mot_de_passe', libelle: 'Nouveau mot de passe', type: 'password',
+          obligatoire: true,
+          aide: 'Une phrase de passe de plusieurs mots est le choix le plus sûr et le plus ' +
+                'simple à retenir.' },
+        { nom: 'confirmation', libelle: 'Confirmer le nouveau mot de passe', type: 'password',
+          obligatoire: true }
+      ], {}, async function (donnees) {
+        if (donnees.nouveau_mot_de_passe !== donnees.confirmation) {
+          throw new Error('Les deux saisies ne correspondent pas.');
+        }
+        await S.API.put('/api/auth/moi', {
+          mot_de_passe_actuel: donnees.mot_de_passe_actuel,
+          nouveau_mot_de_passe: donnees.nouveau_mot_de_passe
+        });
+        S.notifier('Mot de passe modifié. Les autres sessions ont été fermées.', 'succes');
+        S.Etat.utilisateur = await S.API.get('/api/auth/moi');
+      });
+      const zone = document.querySelector('#fond-modale .modale-corps');
+      if (zone && exigences) zone.insertAdjacentHTML('afterbegin', exigences);
+    },
+
     async ouvrirSession() {
       S.Etat.utilisateur = await S.API.get('/api/auth/moi');
+      S.Etat.connecte = true;
       S.Etat.referentiels = await S.API.get('/api/referentiels');
+      try {
+        Object.assign(S.Etat.referentiels,
+                      await S.API.get('/api/evaluation/referentiels'));
+      } catch (erreur) { /* modules d'évaluation indisponibles : sans conséquence */ }
       await Application.rechargerProjets(S.Etat.projetActif);
       document.getElementById('ecran-connexion').classList.add('masque');
       document.getElementById('application').classList.remove('masque');
@@ -149,6 +222,8 @@
     },
 
     async naviguer(cle) {
+      // Les vues d'évaluation sont définies dans un module distinct, fusionné ici.
+      if (global.VuesEvaluation) Object.assign(global.Vues, global.VuesEvaluation);
       const vue = global.Vues[cle];
       if (!vue) return;
       S.Etat.vue = cle;

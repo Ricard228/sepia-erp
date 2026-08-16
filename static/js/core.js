@@ -2,8 +2,12 @@
 (function (global) {
   'use strict';
 
+  /* Le jeton de session n'est plus conservé côté navigateur : il réside dans un
+     cookie « HttpOnly » que le JavaScript ne peut pas lire, et que le navigateur
+     joint automatiquement à chaque requête de même origine. Un script injecté
+     dans la page ne peut donc pas le dérober. */
   const Etat = {
-    jeton: localStorage.getItem('sepia_jeton') || null,
+    connecte: false,
     utilisateur: null,
     projets: [],
     projetActif: parseInt(localStorage.getItem('sepia_projet') || '0', 10) || null,
@@ -15,15 +19,22 @@
   async function appel(chemin, options) {
     options = options || {};
     const entetes = options.headers || {};
-    if (Etat.jeton) entetes.Authorization = 'Bearer ' + Etat.jeton;
     if (options.body && !(options.body instanceof FormData)) {
       entetes['Content-Type'] = 'application/json';
       options.body = JSON.stringify(options.body);
     }
-    const reponse = await fetch(chemin, Object.assign({}, options, { headers: entetes }));
+    const reponse = await fetch(chemin, Object.assign({}, options, {
+      headers: entetes, credentials: 'same-origin'
+    }));
     if (reponse.status === 401) {
       deconnexion();
       throw new Error('Session expirée. Veuillez vous reconnecter.');
+    }
+    if (reponse.status === 429) {
+      let message = 'Trop de requêtes. Patientez quelques instants.';
+      try { const d = await reponse.json(); if (d.detail) message = d.detail; } catch (e) {}
+      notifier(message, 'erreur');
+      throw new Error(message);
     }
     if (!reponse.ok) {
       let message = 'Erreur ' + reponse.status;
@@ -47,7 +58,7 @@
     telecharger: async function (chemin, nomDefaut) {
       basculeChargement(true);
       try {
-        const reponse = await fetch(chemin, { headers: { Authorization: 'Bearer ' + Etat.jeton } });
+        const reponse = await fetch(chemin, { credentials: 'same-origin' });
         if (!reponse.ok) {
           let message = 'Téléchargement impossible (' + reponse.status + ').';
           try { const d = await reponse.json(); if (d.detail) message = d.detail; } catch (e) {}
@@ -72,9 +83,11 @@
   };
 
   function deconnexion() {
-    Etat.jeton = null;
+    Etat.connecte = false;
     Etat.utilisateur = null;
+    // Nettoyage des reliquats d'anciennes versions qui stockaient le jeton.
     localStorage.removeItem('sepia_jeton');
+    fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' }).catch(() => {});
     document.getElementById('application').classList.add('masque');
     document.getElementById('ecran-connexion').classList.remove('masque');
   }

@@ -13,15 +13,26 @@ services:
     autoDeploy: true
     envVars:
       - key: PYTHON_VERSION
-        value: "3.12.7"
+        value: "3.12.7"      # relever au dernier correctif 3.12.x à chaque revue
+      # Active les garde-fous bloquants : cookie Secure, HSTS, messages d'erreur
+      # non détaillés, origines restreintes, refus de démarrer sans secret.
+      - key: SEPIA_ENV
+        value: production
       - key: SEPIA_SECRET_KEY
-        generateValue: true
+        generateValue: true  # jamais de valeur en clair dans le dépôt
       - key: SEPIA_ADMIN_EMAIL
         value: admin@sepia.org
+      # Laissé vide volontairement : si non renseigné, la plateforme engendre au
+      # premier démarrage un mot de passe aléatoire inscrit une seule fois dans
+      # les journaux, et impose son changement à la première connexion.
       - key: SEPIA_ADMIN_PASSWORD
         sync: false          # à renseigner dans le tableau de bord Render
+      # Origines autorisées pour les appels d'API entre domaines. Vide = aucune
+      # origine tierce ; l'interface servie par le même domaine reste fonctionnelle.
+      - key: SEPIA_CORS_ORIGINS
+        sync: false
       - key: SEPIA_SEED_DEMO
-        value: "1"
+        value: "1"           # mettre "0" pour un déploiement sans projets de démonstration
       - key: DATABASE_URL
         fromDatabase:
           name: sepia-db

@@ -14,3 +14,6 @@ data/
 Thumbs.db
 *.log
 docs/generes/
+
+# Configuration locale de lancement : peut contenir des identifiants de développement.
+.claude/

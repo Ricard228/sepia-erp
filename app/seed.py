@@ -1,23 +1,55 @@
-"""Initialisation de la base : compte administrateur et projet de démonstration."""
-from datetime import date
+"""Initialisation de la base : compte administrateur et projets de démonstration."""
+import logging
+from datetime import date, datetime
 
 from sqlalchemy.orm import Session
 
 from .config import ADMIN_EMAIL, ADMIN_NAME, ADMIN_PASSWORD
 from .models import (Activity, Assumption, BudgetLine, Form, FormQuestion, Indicator,
-                     IndicatorActual, IndicatorTarget, LogframeElement, Project, RaciAssignment,
-                     Risk, Stakeholder, User, Zone)
-from .security import hash_password
+                     IndicatorActual, IndicatorTarget, LogframeElement, Project, ProjectMember,
+                     RaciAssignment, Risk, Stakeholder, User, Zone)
+from .security import engendrer_mot_de_passe, hash_password
+from .seed_sante import projet_sante_education
+
+logger = logging.getLogger("sepia.amorcage")
 
 
 def initialiser(db: Session, avec_demo: bool = True) -> None:
-    if not db.query(User).filter(User.email == ADMIN_EMAIL).first():
-        db.add(User(email=ADMIN_EMAIL, full_name=ADMIN_NAME,
-                    password_hash=hash_password(ADMIN_PASSWORD), role="admin",
-                    organisation="Unité de gestion de projet"))
+    """Crée le compte d'administration et, au premier démarrage, les projets d'exemple."""
+    administrateur = db.query(User).filter(User.email == ADMIN_EMAIL).first()
+    if not administrateur:
+        # Aucun mot de passe n'est inscrit dans le code : celui fourni par
+        # l'environnement est utilisé, sinon un mot de passe aléatoire est
+        # engendré et affiché une seule fois dans les journaux du serveur.
+        mot_de_passe = ADMIN_PASSWORD or engendrer_mot_de_passe()
+        administrateur = User(
+            email=ADMIN_EMAIL, full_name=ADMIN_NAME,
+            password_hash=hash_password(mot_de_passe), role="admin",
+            organisation="Unité de gestion de projet",
+            email_verified=True, must_change_password=True,
+            password_changed_at=datetime.utcnow())
+        db.add(administrateur)
         db.commit()
+        if not ADMIN_PASSWORD:
+            logger.warning(
+                "\n%s\n  COMPTE ADMINISTRATEUR CRÉÉ\n  Adresse      : %s\n"
+                "  Mot de passe : %s\n"
+                "  Ce mot de passe n'est affiché qu'une seule fois et devra être changé à la\n"
+                "  première connexion. Définissez SEPIA_ADMIN_PASSWORD pour en fixer un autre.\n%s",
+                "=" * 78, ADMIN_EMAIL, mot_de_passe, "=" * 78)
+
     if avec_demo and not db.query(Project).first():
         _projet_demonstration(db)
+        projet_sante_education(db)
+        # L'administrateur est rattaché à tous les projets : le contrôle d'accès
+        # par projet ne doit pas le priver des jeux de démonstration.
+        for projet in db.query(Project).all():
+            if not db.query(ProjectMember).filter(
+                    ProjectMember.project_id == projet.id,
+                    ProjectMember.user_id == administrateur.id).first():
+                db.add(ProjectMember(project_id=projet.id, user_id=administrateur.id,
+                                     role="responsable"))
+        db.commit()
 
 
 def _projet_demonstration(db: Session) -> None:
