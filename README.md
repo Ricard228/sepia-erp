@@ -384,6 +384,7 @@ pour démarrer sur une instance vierge.
 | `SEPIA_SECRET_KEY` | Clé de signature des jetons | **obligatoire en production** (démarrage refusé sans elle) ; aléatoire à chaque démarrage en développement |
 | `SEPIA_ADMIN_EMAIL` | Compte administrateur initial | `admin@sepia.org` |
 | `SEPIA_ADMIN_PASSWORD` | Mot de passe initial | **aucun** — engendré aléatoirement et journalisé une fois |
+| `SEPIA_ADMIN_RESET` | Réinitialise le compte d'administration au démarrage (voir § 8) | vide — aucune réinitialisation |
 | `SEPIA_TOKEN_TTL` | Durée de validité des jetons (secondes) | `43200` (12 h) |
 | `SEPIA_SEED_DEMO` | Charger les projets d'exemple (`0` pour désactiver) | `1` |
 | `SEPIA_CORS_ORIGINS` | Origines autorisées pour les appels entre domaines, séparées par des virgules | **vide** — aucune origine tierce |
@@ -571,6 +572,42 @@ des recherches sont échappés.
 | **Erreurs** | Aucune trace d'exécution renvoyée au client. Une erreur produit un **identifiant de corrélation** affiché à l'utilisateur et une entrée complète dans les journaux du serveur. Le détail diagnostique n'est renvoyé qu'en développement. |
 | **Dépendances** | 10 dépendances directes, toutes épinglées à une version précise et vérifiées (`requirements.txt`), aucune dépendance JavaScript. Revue trimestrielle recommandée. |
 | **Traçabilité** | Créations, modifications et suppressions consignées dans le journal d'audit, consultable depuis la vue Administration. |
+
+### Reprendre la main sur le compte d'administration
+
+Mot de passe perdu, compte verrouillé par des tentatives infructueuses, désactivé ou rétrogradé
+par erreur : la plateforme n'offre **aucun point d'entrée réseau de réinitialisation**. Un tel
+point d'entrée serait une porte dérobée permanente, exposée à quiconque connaît l'adresse du
+service. La reprise de main passe donc par une preuve d'autorité réelle — l'accès au tableau de
+bord d'hébergement ou au serveur.
+
+**Sur un hébergement sans accès shell (Render, plan gratuit compris)** — par variable
+d'environnement :
+
+1. Définir `SEPIA_ADMIN_RESET` à `1` dans les variables du service ;
+2. facultativement, définir `SEPIA_ADMIN_PASSWORD` pour choisir le mot de passe ;
+3. redéployer ou redémarrer ;
+4. relever le mot de passe dans les journaux de démarrage — chercher
+   `COMPTE ADMINISTRATEUR RÉINITIALISÉ` ;
+5. **retirer `SEPIA_ADMIN_RESET`** : tant que la variable est présente, chaque redémarrage
+   réinitialise le compte.
+
+**Avec un accès au serveur ou à la base** :
+
+```bash
+python scripts/reinitialiser_admin.py
+```
+
+Dans les deux cas, le compte est **recréé s'il a disparu** et remis en état s'il existe : nouveau
+mot de passe, rôle d'administrateur rétabli, compte réactivé, verrouillage et tentatives
+infructueuses effacés, adresse considérée comme confirmée. Le changement du mot de passe est exigé
+à la connexion suivante, et **toutes les sessions ouvertes sont fermées** — si le mot de passe a
+été perdu, on ne peut pas exclure qu'il l'ait été au profit de quelqu'un d'autre.
+
+Il existe une troisième voie, sans réinitialisation : donner une **nouvelle valeur** à
+`SEPIA_ADMIN_EMAIL`. L'amorçage ne trouve pas ce compte et le crée. L'ancien compte reste en
+place, à supprimer ensuite depuis la vue Administration. Un administrateur voyant l'ensemble du
+portefeuille sans rattachement explicite, les projets restent immédiatement accessibles.
 
 ### Exploitation
 

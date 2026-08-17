@@ -1619,7 +1619,38 @@ def construire(chemin_sortie: str) -> str:
          "administrateurs, constitue l'élément de preuve requis lors des audits de qualité des "
          "données et des missions de supervision.")
 
-    titre2(document, "11.6 Recommandations de mise en production")
+    titre2(document, "11.6 Reprendre la main sur le compte d'administration")
+    para(document,
+         "Mot de passe perdu, compte verrouillé par des tentatives infructueuses, désactivé ou "
+         "rétrogradé par erreur : la plateforme n'offre aucun point d'entrée réseau de "
+         "réinitialisation. Un tel point d'entrée serait une porte dérobée permanente, exposée à "
+         "quiconque connaît l'adresse du service. La reprise de main passe donc par une preuve "
+         "d'autorité réelle : l'accès au tableau de bord d'hébergement, ou au serveur lui-même.")
+    tableau(document, ["Situation", "Marche à suivre"],
+            [["Hébergement sans accès shell (Render, plan gratuit compris)",
+              "Définir la variable SEPIA_ADMIN_RESET à 1 — et facultativement "
+              "SEPIA_ADMIN_PASSWORD pour choisir le mot de passe —, redéployer, relever le mot de "
+              "passe dans les journaux de démarrage à la mention « COMPTE ADMINISTRATEUR "
+              "RÉINITIALISÉ », puis retirer la variable : tant qu'elle est présente, chaque "
+              "redémarrage réinitialise le compte."],
+             ["Accès au serveur ou à la base",
+              "Exécuter « python scripts/reinitialiser_admin.py ». Le script demande "
+              "confirmation, agit sur la base désignée par DATABASE_URL et affiche le mot de "
+              "passe une seule fois."],
+             ["Créer un second administrateur plutôt que réinitialiser",
+              "Donner une nouvelle valeur à SEPIA_ADMIN_EMAIL : l'amorçage ne trouve pas ce "
+              "compte et le crée. L'ancien reste en place et pourra être supprimé depuis la vue "
+              "Administration."]],
+            largeurs=[4.5, 12])
+    para(document,
+         "Dans tous les cas, le compte est recréé s'il a disparu et remis en état s'il existe : "
+         "nouveau mot de passe, rôle d'administrateur rétabli, compte réactivé, verrouillage et "
+         "tentatives infructueuses effacés, adresse considérée comme confirmée. Le changement du "
+         "mot de passe est exigé à la connexion suivante et toutes les sessions ouvertes sont "
+         "fermées — si le mot de passe a été perdu, rien ne permet d'exclure qu'il l'ait été au "
+         "profit de quelqu'un d'autre.")
+
+    titre2(document, "11.7 Recommandations de mise en production")
     for texte in [
         "Renseigner la clé de signature des jetons et le mot de passe administrateur avant "
         "l'ouverture du service ; le blueprint de déploiement engendre la première "
@@ -1821,6 +1852,8 @@ def construire(chemin_sortie: str) -> str:
               "aucun : engendré aléatoirement et journalisé une seule fois"],
              ["SEPIA_TOKEN_TTL", "Durée de validité des jetons, en secondes", "43200"],
              ["SEPIA_SEED_DEMO", "Chargement des projets d'exemple", "1"],
+             ["SEPIA_ADMIN_RESET", "Réinitialise le compte d'administration au démarrage",
+              "vide : aucune réinitialisation"],
              ["SEPIA_CORS_ORIGINS", "Origines autorisées pour les appels entre domaines",
               "vide : aucune origine tierce"]],
             largeurs=[5, 7.5, 4], taille=9.5)
@@ -2052,7 +2085,8 @@ def construire(chemin_sortie: str) -> str:
         "│       └── app.js               Navigation et cycle de vie",
         "├── scripts/",
         "│   ├── generer_documentation.py Production du présent document",
-        "│   └── verifier_securite.py     Jeu de vérification des garde-fous",
+        "│   ├── verifier_securite.py     Jeu de vérification des garde-fous",
+        "│   └── reinitialiser_admin.py   Reprise de main sur le compte admin",
         "├── docs/                        Documentation Word",
         "├── requirements.txt             Dépendances Python",
         "├── render.yaml                  Description d'infrastructure Render",

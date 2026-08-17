@@ -27,6 +27,12 @@ services:
       # les journaux, et impose son changement à la première connexion.
       - key: SEPIA_ADMIN_PASSWORD
         sync: false          # à renseigner dans le tableau de bord Render
+      # Reprise de la main sur le compte d'administration en cas de mot de passe
+      # perdu, de compte verrouillé ou désactivé. Mettre "1", redéployer, relever
+      # le mot de passe dans les journaux, puis RETIRER la variable : tant qu'elle
+      # est présente, chaque redémarrage réinitialise le compte.
+      - key: SEPIA_ADMIN_RESET
+        sync: false
       # Origines autorisées pour les appels d'API entre domaines. Vide = aucune
       # origine tierce ; l'interface servie par le même domaine reste fonctionnelle.
       - key: SEPIA_CORS_ORIGINS

@@ -51,6 +51,14 @@ ADMIN_NAME = os.getenv("SEPIA_ADMIN_NAME", "Administrateur SEPIA")
 # dans les journaux, avec obligation de changement à la première connexion.
 ADMIN_PASSWORD = os.getenv("SEPIA_ADMIN_PASSWORD", "").strip()
 
+# Reprise de la main sur le compte d'administration lorsque son mot de passe est
+# perdu. Le déclencheur est une variable d'environnement, donc accessible au seul
+# détenteur du tableau de bord d'hébergement : la réinitialisation ne peut pas
+# être provoquée depuis le réseau, contrairement à un point d'entrée HTTP de
+# secours — qui serait, lui, une porte dérobée permanente.
+ADMIN_RESET = os.getenv("SEPIA_ADMIN_RESET", "").strip().lower() in (
+    "1", "true", "vrai", "oui", "yes", "on")
+
 SEED_DEMO = os.getenv("SEPIA_SEED_DEMO", "1") not in ("0", "false", "False")
 
 # --- Politique de mot de passe --------------------------------------------

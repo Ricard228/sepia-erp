@@ -4,7 +4,7 @@ from datetime import date, datetime
 
 from sqlalchemy.orm import Session
 
-from .config import ADMIN_EMAIL, ADMIN_NAME, ADMIN_PASSWORD
+from .config import ADMIN_EMAIL, ADMIN_NAME, ADMIN_PASSWORD, ADMIN_RESET
 from .models import (Activity, Assumption, BudgetLine, Form, FormQuestion, Indicator,
                      IndicatorActual, IndicatorTarget, LogframeElement, Project, ProjectMember,
                      RaciAssignment, Risk, Stakeholder, User, Zone)
@@ -12,6 +12,45 @@ from .security import engendrer_mot_de_passe, hash_password
 from .seed_sante import projet_sante_education
 
 logger = logging.getLogger("sepia.amorcage")
+
+
+def _annoncer(titre: str, mot_de_passe: str, consigne: str) -> None:
+    """Inscrit une seule fois le mot de passe dans les journaux du serveur."""
+    logger.warning(
+        "\n%s\n  %s\n  Adresse      : %s\n  Mot de passe : %s\n%s\n%s",
+        "=" * 78, titre, ADMIN_EMAIL, mot_de_passe, consigne, "=" * 78)
+
+
+def reinitialiser_administrateur(db: Session) -> str:
+    """Rend la main sur le compte d'administration et retourne son mot de passe.
+
+    Le compte est recréé s'il a disparu, et sinon remis en état de marche :
+    nouveau mot de passe, rôle d'administrateur rétabli, compte réactivé,
+    verrouillage et tentatives infructueuses effacés, adresse considérée comme
+    confirmée, et invalidation de toutes les sessions ouvertes — car si le mot de
+    passe a été perdu, on ne peut pas exclure qu'il ait été perdu au profit de
+    quelqu'un d'autre.
+    """
+    mot_de_passe = ADMIN_PASSWORD or engendrer_mot_de_passe()
+    maintenant = datetime.utcnow()
+    administrateur = db.query(User).filter(User.email == ADMIN_EMAIL).first()
+    if not administrateur:
+        administrateur = User(email=ADMIN_EMAIL, full_name=ADMIN_NAME,
+                              organisation="Unité de gestion de projet")
+        db.add(administrateur)
+    administrateur.password_hash = hash_password(mot_de_passe)
+    administrateur.role = "admin"
+    administrateur.is_active = True
+    administrateur.email_verified = True
+    administrateur.verification_token = None
+    administrateur.failed_attempts = 0
+    administrateur.locked_until = None
+    administrateur.password_changed_at = maintenant
+    administrateur.must_change_password = True
+    administrateur.tokens_valid_from = maintenant
+    db.commit()
+    db.refresh(administrateur)
+    return mot_de_passe
 
 
 def initialiser(db: Session, avec_demo: bool = True) -> None:
@@ -31,12 +70,20 @@ def initialiser(db: Session, avec_demo: bool = True) -> None:
         db.add(administrateur)
         db.commit()
         if not ADMIN_PASSWORD:
-            logger.warning(
-                "\n%s\n  COMPTE ADMINISTRATEUR CRÉÉ\n  Adresse      : %s\n"
-                "  Mot de passe : %s\n"
-                "  Ce mot de passe n'est affiché qu'une seule fois et devra être changé à la\n"
-                "  première connexion. Définissez SEPIA_ADMIN_PASSWORD pour en fixer un autre.\n%s",
-                "=" * 78, ADMIN_EMAIL, mot_de_passe, "=" * 78)
+            _annoncer("COMPTE ADMINISTRATEUR CRÉÉ", mot_de_passe,
+                      "  Ce mot de passe n'est affiché qu'une seule fois et devra être changé à "
+                      "la\n  première connexion. Définissez SEPIA_ADMIN_PASSWORD pour en fixer "
+                      "un autre.")
+    elif ADMIN_RESET:
+        # Demandée explicitement par l'exploitant, la réinitialisation s'applique
+        # à chaque démarrage tant que la variable est présente : d'où l'avertissement.
+        mot_de_passe = reinitialiser_administrateur(db)
+        _annoncer("COMPTE ADMINISTRATEUR RÉINITIALISÉ",
+                  mot_de_passe if not ADMIN_PASSWORD else "celui de SEPIA_ADMIN_PASSWORD",
+                  "  Le changement sera exigé à la connexion et toutes les sessions ouvertes ont\n"
+                  "  été fermées. RETIREZ MAINTENANT SEPIA_ADMIN_RESET : tant qu'elle est\n"
+                  "  présente, chaque redémarrage réinitialise ce compte.")
+        administrateur = db.query(User).filter(User.email == ADMIN_EMAIL).first()
 
     if avec_demo and not db.query(Project).first():
         _projet_demonstration(db)
