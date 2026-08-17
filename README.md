@@ -375,6 +375,13 @@ Le second projet renseigne **toutes** les rubriques de la plateforme : il sert d
 comprendre ce qu'un dispositif de suivi-évaluation complet contient. Mettre `SEPIA_SEED_DEMO=0`
 pour démarrer sur une instance vierge.
 
+**Chargement idempotent.** Les exemples sont repérés par leur **code**, pas par « la base est-elle
+vide ? ». Un exemple absent est donc chargé au démarrage suivant, même sur une instance déjà en
+service — sans quoi la première mise en route figerait à jamais la liste des exemples disponibles,
+et un exemple ajouté par une version ultérieure n'atteindrait jamais les instances existantes. Un
+exemple déjà présent n'est ni recréé ni écrasé : une instance où PADRA-2025 a été repris et
+modifié le conserve intact.
+
 ### Variables d'environnement
 
 | Variable | Rôle | Défaut |

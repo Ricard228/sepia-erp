@@ -85,18 +85,46 @@ def initialiser(db: Session, avec_demo: bool = True) -> None:
                   "  présente, chaque redémarrage réinitialise ce compte.")
         administrateur = db.query(User).filter(User.email == ADMIN_EMAIL).first()
 
-    if avec_demo and not db.query(Project).first():
-        _projet_demonstration(db)
-        projet_sante_education(db)
-        # L'administrateur est rattaché à tous les projets : le contrôle d'accès
-        # par projet ne doit pas le priver des jeux de démonstration.
-        for projet in db.query(Project).all():
-            if not db.query(ProjectMember).filter(
-                    ProjectMember.project_id == projet.id,
-                    ProjectMember.user_id == administrateur.id).first():
-                db.add(ProjectMember(project_id=projet.id, user_id=administrateur.id,
-                                     role="responsable"))
-        db.commit()
+    if avec_demo:
+        _charger_exemples(db, administrateur)
+
+
+# Projets d'exemple, repérés par leur code. Passer par le code plutôt que par
+# « la base est-elle vide ? » est ce qui permet à un exemple ajouté après coup
+# d'atteindre une instance déjà en service : autrement, la première mise en
+# route figerait à jamais la liste des exemples disponibles.
+PROJETS_EXEMPLES = (
+    ("PADRA-2025", lambda db: _projet_demonstration(db)),
+    ("PASSE-2026", projet_sante_education),
+)
+
+
+def _charger_exemples(db: Session, administrateur: User) -> None:
+    """Charge les projets d'exemple absents, sans toucher à ceux déjà présents.
+
+    Un exemple identifié par son code n'est jamais recréé ni écrasé : une
+    instance où PADRA-2025 a été repris et modifié le conserve intact. Seuls les
+    codes absents sont chargés. Mettre SEPIA_SEED_DEMO à 0 désactive entièrement
+    ce chargement, y compris pour un exemple supprimé volontairement.
+    """
+    ajoutes = []
+    for code, charger in PROJETS_EXEMPLES:
+        if db.query(Project).filter(Project.code == code).first():
+            continue
+        charger(db)
+        ajoutes.append(code)
+
+    # L'administrateur est rattaché à tous les projets : le contrôle d'accès par
+    # projet ne doit pas le priver des jeux d'exemple.
+    for projet in db.query(Project).all():
+        if not db.query(ProjectMember).filter(
+                ProjectMember.project_id == projet.id,
+                ProjectMember.user_id == administrateur.id).first():
+            db.add(ProjectMember(project_id=projet.id, user_id=administrateur.id,
+                                 role="responsable"))
+    db.commit()
+    if ajoutes:
+        logger.warning("Projets d'exemple chargés : %s.", ", ".join(ajoutes))
 
 
 def _projet_demonstration(db: Session) -> None:

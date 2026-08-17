@@ -1703,6 +1703,13 @@ def construire(chemin_sortie: str) -> str:
          "Le second projet renseigne l'ensemble des rubriques de la plateforme, y compris celles "
          "que les dispositifs réels laissent le plus souvent vides. La variable "
          "SEPIA_SEED_DEMO fixée à 0 permet de démarrer sur une instance vierge.")
+    para(document,
+         "Les exemples sont repérés par leur code, et non par le fait que la base soit vide : un "
+         "exemple absent est donc chargé au démarrage suivant, même sur une instance déjà en "
+         "service. Sans cela, la première mise en route figerait à jamais la liste des exemples "
+         "disponibles et un exemple ajouté par une version ultérieure n'atteindrait jamais les "
+         "instances existantes. Un exemple déjà présent n'est ni recréé ni écrasé : une instance "
+         "où PADRA-2025 a été repris et modifié le conserve intact.")
 
     titre2(document, "12.2 Séquence de mise en œuvre")
     etapes = [
@@ -2086,7 +2093,9 @@ def construire(chemin_sortie: str) -> str:
         "├── scripts/",
         "│   ├── generer_documentation.py Production du présent document",
         "│   ├── verifier_securite.py     Jeu de vérification des garde-fous",
-        "│   └── reinitialiser_admin.py   Reprise de main sur le compte admin",
+        "│   ├── reinitialiser_admin.py   Reprise de main sur le compte admin",
+        "│   ├── verifier_reprise_admin.py Contrôles de la reprise de main",
+        "│   └── verifier_exemples.py     Contrôles du chargement des exemples",
         "├── docs/                        Documentation Word",
         "├── requirements.txt             Dépendances Python",
         "├── render.yaml                  Description d'infrastructure Render",
